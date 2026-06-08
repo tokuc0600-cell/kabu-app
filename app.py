@@ -1,6 +1,5 @@
 import streamlit as st
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import yfinance as yf
 import time
@@ -10,23 +9,37 @@ st.set_page_config(page_title="マイ投資ダッシュボード", layout="wide"
 st.title("📊 株価ウォッチリスト Web App")
 
 # --- Googleスプレッドシートへの接続設定 ---
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-# 【重要】ご自身のJSON鍵ファイル名に必ず書き換えてください！
-creds = ServiceAccountCredentials.from_json_keyfile_name("my-project-stock-498414-56d26f2c27b1.json", scope)
+@st.cache_resource
+def init_connection():
+    # Streamlit CloudのSecretsを使う場合（推奨）
+    if "gcp_service_account" in st.secrets:
+        from google.oauth2.service_account import Credentials
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+        return gspread.authorize(creds)
+    else:
+        # ローカル用
+        return gspread.service_account(filename="my-project-stock-498414-56d26f2c27b1.json")
 
 @st.cache_data(ttl=60) # 1分間データをキャッシュして高速化
-def load_data():
+def load_data(_client):
     try:
-        client = gspread.authorize(creds)
-        spreadsheet = client.open("kabu")
+        spreadsheet = _client.open("kabu")
         sheet = spreadsheet.worksheet("ウォッチリスト")
-        return sheet, sheet.get_all_records()
+        return sheet.get_all_records()
     except Exception as e:
-        st.error(f"スプレッドシートの読み込みに失敗しました: {e}")
-        return None, []
+        st.error(f"データの読み込みに失敗しました: {e}")
+        return []
 
-sheet, records = load_data()
+try:
+    client = init_connection()
+    spreadsheet = client.open("kabu")
+    sheet = spreadsheet.worksheet("ウォッチリスト")
+    records = load_data(client)
+except Exception as e:
+    st.error(f"スプレッドシート接続エラー: {e}")
+    sheet = None
+    records = []
 
 if records:
     # データを綺麗な表（DataFrame）に変換

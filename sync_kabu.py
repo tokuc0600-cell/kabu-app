@@ -1,17 +1,11 @@
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import yfinance as yf
 import time
 import pandas as pd
 
 # 1. Google Sheets APIへの認証接続
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-# 【確認】ご自身のJSON鍵ファイル名に書き換えてください
-creds = ServiceAccountCredentials.from_json_keyfile_name("my-project-stock-498414-56d26f2c27b1.json", scope)
-client = gspread.authorize(creds)
-
 try:
+    client = gspread.service_account(filename="my-project-stock-498414-56d26f2c27b1.json")
     spreadsheet = client.open("kabu")
 except Exception as e:
     print(f"スプレッドシートのオープンに失敗しました: {e}")
