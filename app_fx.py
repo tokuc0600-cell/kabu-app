@@ -13,6 +13,7 @@ def check_password():
     """Returns `True` if the user had the correct password."""
     # Secretsにパスワードが設定されていない場合は、保護なしで表示する
     if "app_password" not in st.secrets:
+        st.warning("⚠️ デバッグ情報: Secretsに `app_password` が見つかりません。パスワード保護をスキップします。")
         return True
 
     def password_entered():
