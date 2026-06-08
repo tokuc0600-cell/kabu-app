@@ -6,6 +6,36 @@ import time
 
 # --- ページの設定（スマホ対応） ---
 st.set_page_config(page_title="マイ投資ダッシュボード", layout="wide")
+
+# --- パスワード保護 ---
+def check_password():
+    """Returns `True` if the user had the correct password."""
+    # Secretsにパスワードが設定されていない場合は、保護なしで表示する
+    if "app_password" not in st.secrets:
+        return True
+
+    def password_entered():
+        if st.session_state["password"] == st.secrets["app_password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # パスワードを保持しない
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        st.title("🔒 ログイン")
+        st.text_input("パスワードを入力してください", type="password", on_change=password_entered, key="password")
+        return False
+    elif not st.session_state["password_correct"]:
+        st.title("🔒 ログイン")
+        st.text_input("パスワードを入力してください", type="password", on_change=password_entered, key="password")
+        st.error("😕 パスワードが間違っています")
+        return False
+    else:
+        return True
+
+if not check_password():
+    st.stop()  # パスワードが正しくない場合はここで処理を停止し、以降のアプリ画面を描画しない
+
 st.title("📊 株価ウォッチリスト Web App")
 
 # --- Googleスプレッドシートへの接続設定 ---
