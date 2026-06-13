@@ -1,3 +1,8 @@
+import os
+os.system("pip install plotly yfinance")
+
+
+# （ここから下は元のコードのままで大丈夫です！）
 import streamlit as st
 import gspread
 import pandas as pd
