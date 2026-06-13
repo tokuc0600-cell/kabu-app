@@ -58,7 +58,7 @@ def init_connection():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
     else:
-        return gspread.service_account(filename="my-project-stock-498414-56d26f2c27b1.json")
+        return gspread.service_account(filename="../../credentials/my-project-stock-498414-56d26f2c27b1.json")
 
 def get_sheet(client):
     try:

@@ -5,7 +5,7 @@ import pandas as pd
 
 # 1. Google Sheets APIへの認証接続
 try:
-    client = gspread.service_account(filename="my-project-stock-498414-56d26f2c27b1.json")
+    client = gspread.service_account(filename="../../credentials/my-project-stock-498414-56d26f2c27b1.json")
     spreadsheet = client.open("kabu")
 except Exception as e:
     print(f"スプレッドシートのオープンに失敗しました: {e}")
