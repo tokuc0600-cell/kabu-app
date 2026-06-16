@@ -24,41 +24,37 @@ def update_fx_watchlist_with_signals():
     try:
         sheet = spreadsheet.worksheet("FXウォッチリスト")
     except Exception as e:
-        print(f"タブ【FXウォッチリスト】が見つかりません。先にスプレッドシートに作成してください: {e}")
+        print(f"タブ【FXウォッチリスト】が見つかりません: {e}")
         return
 
     records = sheet.get_all_records()
-    
+    all_updates = []
+
+    # フェーズ1: 全銘柄のデータを取得（書き込みなし）
+    print("--- フェーズ1: データ取得 ---")
     for idx, row in enumerate(records, start=2):
         ticker_code = str(row.get('Yahooティッカー', '')).strip()
         pair_name = str(row.get('通貨ペア名', '')).strip()
-        
+
         if not ticker_code or ticker_code == 'nan':
             continue
-            
+
         try:
-            # yfinanceから、4時間足データを取得（200EMAを計算するため約60日分を取得）
             ticker = yf.Ticker(ticker_code)
-            hist = ticker.history(interval='4h', period='60d') 
-            
+            hist = ticker.history(interval='4h', period='60d')
+
             if len(hist) >= 200:
-                # 20EMAと200EMAを計算
                 hist['EMA20'] = hist['Close'].ewm(span=20, adjust=False).mean()
                 hist['EMA200'] = hist['Close'].ewm(span=200, adjust=False).mean()
-                
-                # 最新の現在値とEMAを取得
+
                 current_price = round(hist['Close'].iloc[-1], 3)
                 ema20_value = round(hist['EMA20'].iloc[-1], 3)
                 ema200_value = round(hist['EMA200'].iloc[-1], 3)
-                
-                # 20EMAからの乖離率を計算（％表記）
                 kairi = round(((current_price - ema20_value) / ema20_value) * 100, 2)
-                
-                # --- トレンド状態とシグナル判定 ---
+
                 trend = "レンジ"
                 signal = "安定"
-                
-                # パーフェクトオーダー判定
+
                 if current_price > ema20_value > ema200_value:
                     trend = "強い上昇"
                 elif current_price < ema20_value < ema200_value:
@@ -67,38 +63,42 @@ def update_fx_watchlist_with_signals():
                     trend = "やや上昇"
                 elif current_price < ema20_value:
                     trend = "やや下降"
-                
+
                 if len(hist) >= 2:
-                    # 前日の値
                     prev_ema20 = hist['EMA20'].iloc[-2]
                     prev_ema200 = hist['EMA200'].iloc[-2]
-                    # 当日の値
                     curr_ema20 = hist['EMA20'].iloc[-1]
                     curr_ema200 = hist['EMA200'].iloc[-1]
-                    
-                    # 20EMAが200EMAを下から上に突き抜けたらゴールデンクロス
+
                     if prev_ema20 <= prev_ema200 and curr_ema20 > curr_ema200:
                         signal = "★ゴールデンクロス（買い）"
-                    # 20EMAが200EMAを上から下に突き抜けたらデッドクロス
                     elif prev_ema20 >= prev_ema200 and curr_ema20 < curr_ema200:
                         signal = "▼デッドクロス（売り）"
 
-                # スプレッドシートへ一括書き込み（API呼び出しを6回→1回に削減）
-                # C:現在値, D:20EMA, E:200EMA, F:20EMA乖離率, G:トレンド状態, H:シグナル
-                sheet.batch_update([{
-                    'range': f'C{idx}:H{idx}',
-                    'values': [[current_price, ema20_value, ema200_value, f"{kairi}%", trend, signal]]
-                }])
-                
-                print(f"[成功] {pair_name} ({ticker_code}) -> 現在値:{current_price} | 20EMA:{ema20_value} | 200EMA:{ema200_value} | 乖離率:{kairi}% | トレンド:{trend} | シグナル:{signal}")
+                all_updates.append({
+                    'row': idx,
+                    'values': [current_price, ema20_value, ema200_value, f"{kairi}%", trend, signal],
+                    'label': f"{pair_name} ({ticker_code})"
+                })
+                print(f"[取得] {pair_name} ({ticker_code}) 現在値:{current_price}")
             else:
-                print(f"[警告] {ticker_code} のデータ数が足りません（200本未満）。")
-                
+                print(f"[警告] {ticker_code} データ不足（200本未満）")
+
         except Exception as e:
-            print(f"[エラー] {ticker_code} の解析中に問題発生: {e}")
-        
-        # 安全のために1.2秒待機
+            print(f"[エラー] {ticker_code}: {e}")
+
         time.sleep(1.2)
+
+    # フェーズ2: セルごとに書き込み（1.2秒間隔でレート制限対応）
+    print(f"\n--- フェーズ2: {len(all_updates)}銘柄を書き込み中 ---")
+    for item in all_updates:
+        row = item['row']
+        vals = item['values']
+        cols = [3, 4, 5, 6, 7, 8]  # C, D, E, F, G, H
+        for col, val in zip(cols, vals):
+            sheet.update_cell(row, col, val)
+            time.sleep(1.2)
+        print(f"[書き込み完了] {item['label']}")
 
 # 🚀 実行
 if __name__ == "__main__":
