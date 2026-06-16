@@ -5,6 +5,9 @@ on:
     - cron: "0 22 * * *"  # 毎日 7:00 JST (22:00 UTC)
   workflow_dispatch:       # 手動実行ボタン
 
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
 permissions:
   contents: read
 
