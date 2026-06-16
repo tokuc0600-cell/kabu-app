@@ -83,14 +83,9 @@ def update_fx_watchlist_with_signals():
                     elif prev_ema20 >= prev_ema200 and curr_ema20 < curr_ema200:
                         signal = "▼デッドクロス（売り）"
 
-                # スプレッドシートへ書き込み
-                # A:通貨ペア名(1), B:Yahooティッカー(2), C:現在値(3), D:20EMA(4), E:200EMA(5), F:20EMA乖離率(6), G:トレンド状態(7), H:シグナル(8)
-                sheet.update_cell(idx, 3, current_price) # C列: 現在値
-                sheet.update_cell(idx, 4, ema20_value)   # D列: 20EMA
-                sheet.update_cell(idx, 5, ema200_value)  # E列: 200EMA
-                sheet.update_cell(idx, 6, f"{kairi}%")   # F列: 20EMA乖離率
-                sheet.update_cell(idx, 7, trend)         # G列: トレンド状態
-                sheet.update_cell(idx, 8, signal)        # H列: シグナル
+                # スプレッドシートへ一括書き込み（API呼び出しを6回→1回に削減）
+                # C:現在値, D:20EMA, E:200EMA, F:20EMA乖離率, G:トレンド状態, H:シグナル
+                sheet.update([[current_price, ema20_value, ema200_value, f"{kairi}%", trend, signal]], f'C{idx}:H{idx}')
                 
                 print(f"[成功] {pair_name} ({ticker_code}) -> 現在値:{current_price} | 20EMA:{ema20_value} | 200EMA:{ema200_value} | 乖離率:{kairi}% | トレンド:{trend} | シグナル:{signal}")
             else:
