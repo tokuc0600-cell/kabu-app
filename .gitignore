@@ -1,6 +1,7 @@
 # 認証情報・機密ファイル（絶対にGitHubにアップしない）
 credentials/
 *.json
+!.claude/settings.json
 *-credentials*.json
 *service_account*.json
 

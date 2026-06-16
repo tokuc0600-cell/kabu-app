@@ -1,0 +1,26 @@
+name: FX Watchlist Sync
+
+on:
+  schedule:
+    - cron: "0 22 * * *"  # 毎日 7:00 JST (22:00 UTC)
+  workflow_dispatch:       # 手動実行ボタン
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run FX sync
+        env:
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+        run: uv run python streamlit_dashboard/fx/sync_fx.py

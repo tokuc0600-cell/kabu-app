@@ -2,10 +2,18 @@ import gspread
 import yfinance as yf
 import time
 import pandas as pd
+import os
+import json
 
 # 1. Google Sheets APIへの認証接続
+# GitHub Actions: 環境変数 GCP_SERVICE_ACCOUNT_JSON からJSON文字列を読む
+# ローカル: credentials/ フォルダのJSONファイルを使う
 try:
-    client = gspread.service_account(filename="../../credentials/my-project-stock-498414-56d26f2c27b1.json")
+    gcp_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
+    if gcp_json:
+        client = gspread.service_account_from_dict(json.loads(gcp_json))
+    else:
+        client = gspread.service_account(filename="../../credentials/my-project-stock-498414-56d26f2c27b1.json")
     spreadsheet = client.open("kabu")
 except Exception as e:
     print(f"スプレッドシートのオープンに失敗しました: {e}")
