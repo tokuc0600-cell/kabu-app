@@ -5,9 +5,6 @@ on:
     - cron: "0 22 * * *"  # 毎日 7:00 JST (22:00 UTC)
   workflow_dispatch:       # 手動実行ボタン
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 permissions:
   contents: read
 
@@ -18,15 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: uv sync
+        run: pip install gspread pandas yfinance google-auth google-auth-oauthlib
 
       - name: Run FX sync
         env:
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-        run: uv run python streamlit_dashboard/fx/sync_fx.py
+        run: python streamlit_dashboard/fx/sync_fx.py
