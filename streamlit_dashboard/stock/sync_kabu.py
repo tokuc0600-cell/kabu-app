@@ -78,7 +78,10 @@ def update_watchlist_with_signals():
 
                 # スプレッドシートへ一括書き込み（API呼び出しを4回→1回に削減）
                 # D:現在値, E:25日移動平均, F:25日乖離率, G:シグナル
-                sheet.update([[current_price, ma25_value, f"{kairi}%", signal]], f'D{idx}:G{idx}')
+                sheet.batch_update([{
+                    'range': f'D{idx}:G{idx}',
+                    'values': [[current_price, ma25_value, f"{kairi}%", signal]]
+                }])
                 
                 print(f"[成功] {row.get('銘柄名', code)} ({code}) -> 現在値:{current_price}円 | 25日線:{ma25_value}円 | 乖離率:{kairi}% | 状態:{signal}")
             else:

@@ -85,7 +85,10 @@ def update_fx_watchlist_with_signals():
 
                 # スプレッドシートへ一括書き込み（API呼び出しを6回→1回に削減）
                 # C:現在値, D:20EMA, E:200EMA, F:20EMA乖離率, G:トレンド状態, H:シグナル
-                sheet.update([[current_price, ema20_value, ema200_value, f"{kairi}%", trend, signal]], f'C{idx}:H{idx}')
+                sheet.batch_update([{
+                    'range': f'C{idx}:H{idx}',
+                    'values': [[current_price, ema20_value, ema200_value, f"{kairi}%", trend, signal]]
+                }])
                 
                 print(f"[成功] {pair_name} ({ticker_code}) -> 現在値:{current_price} | 20EMA:{ema20_value} | 200EMA:{ema200_value} | 乖離率:{kairi}% | トレンド:{trend} | シグナル:{signal}")
             else:
