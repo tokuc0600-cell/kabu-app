@@ -38,7 +38,7 @@ def update_watchlist_with_signals():
         try:
             # yfinanceから、移動平均線の計算に必要な「過去6ヶ月分（90日強）」の日足データを一括取得
             ticker = yf.Ticker(ticker_code)
-            hist = ticker.history(period='6m') # 6ヶ月分
+            hist = ticker.history(period='6mo') # 6ヶ月分
             
             if len(hist) >= 25:
                 # 25日移動平均線（MA25）を計算
