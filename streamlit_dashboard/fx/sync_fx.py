@@ -4,6 +4,7 @@ import time
 import pandas as pd
 import os
 import json
+from datetime import datetime
 
 # 1. Google Sheets APIへの認証接続
 # GitHub Actions: 環境変数 GCP_SERVICE_ACCOUNT_JSON からJSON文字列を読む
@@ -75,9 +76,10 @@ def update_fx_watchlist_with_signals():
                     elif prev_ema20 >= prev_ema200 and curr_ema20 < curr_ema200:
                         signal = "▼デッドクロス（売り）"
 
+                updated_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 all_updates.append({
                     'row': idx,
-                    'values': [current_price, ema20_value, ema200_value, f"{kairi}%", trend, signal],
+                    'values': [current_price, ema20_value, ema200_value, f"{kairi}%", trend, signal, updated_at],
                     'label': f"{pair_name} ({ticker_code})"
                 })
                 print(f"[取得] {pair_name} ({ticker_code}) 現在値:{current_price}")
@@ -94,7 +96,7 @@ def update_fx_watchlist_with_signals():
     for item in all_updates:
         row = item['row']
         vals = item['values']
-        cols = [3, 4, 5, 6, 7, 8]  # C, D, E, F, G, H
+        cols = [3, 4, 5, 6, 7, 8, 9]  # C, D, E, F, G, H, I
         for col, val in zip(cols, vals):
             sheet.update_cell(row, col, val)
             time.sleep(1.2)
