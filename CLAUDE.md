@@ -127,7 +127,7 @@ uv run python backtest/engine.py --ticker USDJPY=X --timeframe 4h --fast 20 --sl
 ## フェーズ進捗
 
 - [x] Phase 0：設計・環境整備
-- [ ] Phase 1：バックテストエンジン強化
-- [ ] Phase 2：Streamlit PF可視化UI
+- [x] Phase 1：バックテストエンジン強化
+- [x] Phase 2：Streamlit PF可視化UI
 - [ ] Phase 3：発信ワークフロー確立
 - [ ] Phase 4：拡張（RSI・MACD・GitHub Actions）
