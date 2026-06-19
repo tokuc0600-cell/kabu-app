@@ -73,6 +73,9 @@ kabu_app/
 4. credentials/ と .streamlit/secrets.toml は Git に含めない（.gitignore済み）
 5. backtest/data/ はキャッシュ扱い → .gitignore対象
 6. 機能追加後は必ず git commit（メッセージ: "feat: [機能名]"）
+7. 機能追加・修正後は、コードの正しさだけで終わらせず、実際にコマンドやアプリを動かして検証する
+   （CLIは実際の出力値、Streamlit系はブラウザ/スクリーンショットでの画面表示とコンソールエラーの有無を確認すること。
+   検証手順の詳細は docs/operation_manual.md を参照）
 ```
 
 ---

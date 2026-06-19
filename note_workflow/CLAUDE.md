@@ -14,12 +14,12 @@ note_workflow/
 ├── prompts/
 │   └── note_agent.md          # 記事生成プロンプト（Leon版）
 ├── drafts/                    # 執筆中・下書き
-│   └── YYYYMMDD_draft_[slug].md
+│   └── [slug].md
 ├── published/                 # note公開済みアーカイブ
-│   └── YYYYMMDD_[slug].md
+│   └── [slug].md
 └── assets/
     └── headers/               # ヘッダー画像
-        └── YYYYMMDD_[slug].png
+        └── [slug].png
 ```
 
 ---
@@ -28,12 +28,13 @@ note_workflow/
 
 | 種別 | 命名パターン | 例 |
 |------|------------|-----|
-| 下書き | `YYYYMMDD_draft_[slug].md` | `20260618_draft_ema-alert.md` |
-| 公開済み | `YYYYMMDD_[slug].md` | `20260618_ema-alert.md` |
-| ヘッダー画像 | `YYYYMMDD_[slug].png` | `20260618_ema-alert.png` |
+| 下書き | `[slug].md` | `ema-alert.md` |
+| 公開済み | `[slug].md` | `ema-alert.md` |
+| ヘッダー画像 | `[slug].png` | `ema-alert.png` |
 
-- スラッグはハイフン繋ぎの英語、記事内容を簡潔に表すもの
-- 日付はコマンド実行日（`date +%Y%m%d` で取得）
+- スラッグはハイフン繋ぎの英語、記事内容を簡潔に表すもの（日付は含めない。公開日・更新履歴はgitのコミット履歴で追う）
+- 既存記事を大幅改稿する場合も同じスラッグのファイルを直接編集する（gitが履歴を保持する）
+- 複数記事を1本に融合する場合は、元記事は`published/`に残したまま新しいスラッグでファイルを作成し、どの記事を統合したかはコミットメッセージに記録する（記事本文にメタ情報は書かない）
 
 ---
 
@@ -44,7 +45,7 @@ note_workflow/
 ```
 1. prompts/note_agent.md を読み込む
 2. outlineモード or reviewモードで記事を生成
-3. drafts/YYYYMMDD_draft_[slug].md に保存
+3. drafts/[slug].md に保存
 4. generate_header.py を実行してヘッダー画像を生成・保存
 5. git add drafts/ assets/headers/
 6. git commit -m "add: draft [slug]"
@@ -59,7 +60,7 @@ note_workflow/
 ```bash
 python note_workflow/assets/generate_header.py \
   --title "記事タイトル" \
-  --slug "20260618_slug-name"
+  --slug "slug-name"
 ```
 
 画像仕様:
@@ -90,8 +91,13 @@ git add note_workflow/drafts/ note_workflow/assets/headers/
 git commit -m "add: draft [slug]"
 
 # 公開済みに移動後のコミット（Leonからの指示後に実行）
-git mv note_workflow/drafts/YYYYMMDD_draft_[slug].md note_workflow/published/YYYYMMDD_[slug].md
+git mv note_workflow/drafts/[slug].md note_workflow/published/[slug].md
 git commit -m "publish: [slug]"
+
+# 複数記事を1本に融合する場合（元記事はpublished/に残す）
+# 新しいスラッグでファイルを作成し、コミットメッセージに統合元を記録する
+git add note_workflow/drafts/[new-slug].md
+git commit -m "add: draft [new-slug] (merge: [slug-a] + [slug-b])"
 ```
 
 ---
