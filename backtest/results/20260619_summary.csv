@@ -1,6 +1,0 @@
-﻿ticker,timeframe,fast_ema,slow_ema,total_trades,win_rate,profit_factor,avg_profit,avg_loss,risk_reward,max_drawdown
-USDJPY=X,4h,20,200,4,0.0,0.0,0.0,161.8252,0.0,585.0998
-USDJPY=X,4h,20,200,4,0.0,0.0,0.0,161.8252,0.0,585.0998
-USDJPY=X,4h,20,200,29,27.59,0.91,333.1251,140.1856,2.38,2217.3983
-7203.T,1d,25,75,11,18.18,0.78,14.535,4.1471,3.5,26.8265
-USDJPY=X,1h,20,200,12,0.0,0.0,0.0,70.3913,0.0,825.496
