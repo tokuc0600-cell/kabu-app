@@ -7,7 +7,13 @@ from pathlib import Path
 import pandas as pd
 
 from backtest.data_fetcher import fetch_ohlcv
-from backtest.signals import detect_signals
+from backtest.strategy import (
+    Position,
+    PositionState,
+    attach_indicators,
+    detect_cross_series,
+    step_position,
+)
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
@@ -21,32 +27,62 @@ def _pip_multiplier(ticker: str) -> float:
     return 100 if "JPY" in ticker else 10000
 
 
-def build_trades(signals: pd.DataFrame, is_fx: bool, pip_multiplier: float = 10000) -> pd.DataFrame:
-    """連続するシグナルをペアにしてトレードを構築する。
+def build_trades(
+    df: pd.DataFrame,
+    fast: int,
+    slow: int,
+    stop_loss_pct: float,
+    take_profit_pct: float,
+    is_fx: bool,
+    pip_multiplier: float = 10000,
+    ma_type: str = "ema",
+) -> pd.DataFrame:
+    """strategy.step_position()で1本ずつポジション状態を遷移させてトレードを構築する。
 
-    シグナルiでポジションを開き、次のシグナル(i+1)のentryで決済する
-    （ホールド型・次のクロスでイグジット）。最後のシグナルは未決済のため対象外。
+    エントリー：ゴールデンクロス（確定足）かつノーポジ。
+    エグジット：デッドクロス or 損切りライン or 利確ラインのいずれか（strategy.should_exit準拠）。
     """
+    data = attach_indicators(df, fast=fast, slow=slow, ma_type=ma_type)
+    cross = detect_cross_series(data)
+
+    position = Position(state=PositionState.NONE)
+    pending_entry = None
     trades = []
-    for i in range(len(signals) - 1):
-        entry = signals.iloc[i]
-        exit_ = signals.iloc[i + 1]
-        direction = 1 if entry["signal_type"] == "GC" else -1
 
-        if is_fx:
-            profit_loss = (exit_["entry_price"] - entry["entry_price"]) * direction * pip_multiplier
-        else:
-            profit_loss = (exit_["entry_price"] - entry["entry_price"]) / entry["entry_price"] * direction * 100
+    for i in range(1, len(data)):
+        current_price = data["close"].iloc[i]
+        current_time = data["time"].iloc[i]
+        position, event = step_position(
+            position,
+            cross.iloc[i],
+            current_price,
+            current_time,
+            stop_loss_pct,
+            take_profit_pct,
+        )
+        if event is None:
+            continue
 
-        trades.append({
-            "signal_date": entry["signal_date"],
-            "signal_type": entry["signal_type"],
-            "entry_price": entry["entry_price"],
-            "exit_price": exit_["entry_price"],
-            "profit_loss": round(profit_loss, 4),
-            "result": "WIN" if profit_loss > 0 else "LOSS",
-            "hold_bars": int(exit_["entry_idx"] - entry["entry_idx"]),
-        })
+        if event["action"] == "ENTRY":
+            pending_entry = {**event, "idx": i}
+        elif event["action"] == "EXIT" and pending_entry is not None:
+            profit_loss = (
+                (event["price"] - pending_entry["price"]) * pip_multiplier
+                if is_fx
+                else (event["price"] - pending_entry["price"]) / pending_entry["price"] * 100
+            )
+
+            trades.append({
+                "signal_date": pending_entry["time"],
+                "signal_type": "GC",
+                "entry_price": pending_entry["price"],
+                "exit_price": event["price"],
+                "profit_loss": round(profit_loss, 4),
+                "result": "WIN" if profit_loss > 0 else "LOSS",
+                "hold_bars": i - pending_entry["idx"],
+                "exit_reason": event["reason"],
+            })
+            pending_entry = None
 
     return pd.DataFrame(trades)
 
@@ -88,10 +124,26 @@ def summarize(trades: pd.DataFrame) -> dict:
     }
 
 
-def run(ticker: str, timeframe: str, fast: int, slow: int, period: str, no_cache: bool) -> tuple[pd.DataFrame, dict]:
+def run(
+    ticker: str,
+    timeframe: str,
+    fast: int,
+    slow: int,
+    period: str,
+    no_cache: bool,
+    stop_loss_pct: float = 0.0,
+    take_profit_pct: float = 0.0,
+) -> tuple[pd.DataFrame, dict]:
     df = fetch_ohlcv(ticker, timeframe, period=period, no_cache=no_cache)
-    signals = detect_signals(df, fast=fast, slow=slow)
-    trades = build_trades(signals, is_fx=_is_fx(ticker), pip_multiplier=_pip_multiplier(ticker))
+    trades = build_trades(
+        df,
+        fast=fast,
+        slow=slow,
+        stop_loss_pct=stop_loss_pct,
+        take_profit_pct=take_profit_pct,
+        is_fx=_is_fx(ticker),
+        pip_multiplier=_pip_multiplier(ticker),
+    )
     summary = summarize(trades)
     return trades, summary
 
@@ -143,9 +195,20 @@ def main():
     parser.add_argument("--slow", type=int, default=200, help="slowEMA期間")
     parser.add_argument("--period", default="2y", help="取得期間（デフォルト: 2y）")
     parser.add_argument("--no-cache", action="store_true", help="キャッシュを無視して再取得")
+    parser.add_argument("--stop-loss", type=float, default=0.0, help="損切りライン（建値からの下落率%、0=無効）")
+    parser.add_argument("--take-profit", type=float, default=0.0, help="利確ライン（建値からの上昇率%、0=無効）")
     args = parser.parse_args()
 
-    trades, summary = run(args.ticker, args.timeframe, args.fast, args.slow, args.period, args.no_cache)
+    trades, summary = run(
+        args.ticker,
+        args.timeframe,
+        args.fast,
+        args.slow,
+        args.period,
+        args.no_cache,
+        stop_loss_pct=args.stop_loss,
+        take_profit_pct=args.take_profit,
+    )
     detail_path = save_results(args.ticker, args.timeframe, args.fast, args.slow, trades, summary)
     print_summary(args.ticker, args.timeframe, args.fast, args.slow, summary, detail_path)
 

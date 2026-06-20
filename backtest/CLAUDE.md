@@ -44,7 +44,9 @@ backtest/
 
 ### PF計算（engine.py）
 ```
-- イグジットは「次のクロス発生時の始値」（ホールド型）
+- backtest/strategy.py の step_position() で1本ずつポジション状態を遷移させる（Phase2.5〜）
+- エントリー：ゴールデンクロス（確定足）かつノーポジ
+- イグジット：デッドクロス or 損切りライン or 利確ラインのいずれか（--stop-loss/--take-profit未指定時はデッドクロスのみ）
 - FXはpips単位、株は%単位で損益計算
 - 出力①：トレード明細CSV（results/YYYYMMDD_[ticker]_[tf]_fast[n]_slow[n].csv）
 - 出力②：サマリーCSV（results/YYYYMMDD_summary.csv）に追記
@@ -54,20 +56,26 @@ backtest/
 ### CLIインターフェース（engine.py）
 ```bash
 # 基本実行
-uv run python backtest/engine.py \
+uv run python -m backtest.engine \
   --ticker USDJPY=X \
   --timeframe 4h \
   --fast 20 \
-  --slow 200
+  --slow 200 \
+  --stop-loss 2 \
+  --take-profit 5
 
 # オプション一覧
---ticker     : yfinanceティッカー（FX例: USDJPY=X / 株例: 7203.T）
---timeframe  : 1h / 4h / 1d
---fast       : fastEMA期間（デフォルト: 20）
---slow       : slowEMA期間（デフォルト: 200）
---period     : 取得期間（デフォルト: 2y）
---no-cache   : キャッシュを無視して再取得
+--ticker      : yfinanceティッカー（FX例: USDJPY=X / 株例: 7203.T）
+--timeframe   : 1h / 4h / 1d
+--fast        : fastEMA期間（デフォルト: 20）
+--slow        : slowEMA期間（デフォルト: 200）
+--period      : 取得期間（デフォルト: 2y）
+--no-cache    : キャッシュを無視して再取得
+--stop-loss   : 損切りライン（建値からの下落率%、デフォルト0=無効）
+--take-profit : 利確ライン（建値からの上昇率%、デフォルト0=無効）
 ```
+
+実行時は `backtest/` をパッケージとして解決できるよう、プロジェクトルートから `-m backtest.engine` 形式で起動すること（`python backtest/engine.py`では`backtest`モジュールが見つからずImportErrorになる）。
 
 ---
 
@@ -93,7 +101,7 @@ uv run python backtest/engine.py \
 ```
 トレード明細:
   signal_date, signal_type, entry_price, exit_price,
-  profit_loss, result, hold_bars
+  profit_loss, result, hold_bars, exit_reason（DC/STOP_LOSS/TAKE_PROFIT）
 
 サマリー:
   ticker, timeframe, fast_ema, slow_ema,

@@ -11,6 +11,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 
+from sync_kabu import update_watchlist_with_signals
+
 # ─────────────────────────────────────────
 # ページ設定
 # ─────────────────────────────────────────
@@ -197,66 +199,14 @@ with tab1:
         st.subheader("⚙️ 遠隔コントロール")
         if st.button("🔄 今すぐ全銘柄の株価を最新に更新する", use_container_width=True):
             st.info("東証から最新データを収集中です... (画面を閉じずにしばらくお待ちください)")
-            
+
             # 🚨 ボタンが押された瞬間に、使い回しではなく「完全に新鮮な接続」をその場で作る
             btn_client = init_connection()
             btn_spreadsheet = btn_client.open("kabu")
             btn_sheet = btn_spreadsheet.worksheet("ウォッチリスト")
-            
-            header = btn_sheet.get_all_values()[0]
-            updated_rows = []
-            progress_bar = st.progress(0)
 
-            for idx, row in enumerate(records, start=2):
-                code = str(row.get("銘柄コード", "")).strip()
-                if not code or code == "nan":
-                    updated_rows.append([row.get(h, "") for h in header])
-                    continue
-
-                ticker_code   = f"{code}.T"
-                current_price = row.get("現在値", "")
-                ma25_value    = row.get("25日移動平均", "")
-                kairi_str     = row.get("25日乖離率", "")
-                signal        = row.get("シグナル", "安定")
-
-                try:
-                    ticker = yf.Ticker(ticker_code)
-                    hist   = ticker.history(period="1y")
-                    if not hist.empty:
-                        hist["MA25"] = hist["Close"].rolling(window=25).mean()
-                        hist["MA5"]  = hist["Close"].rolling(window=5).mean()
-                        if not pd.isna(hist["MA25"].iloc[-1]):
-                            current_price = round(hist["Close"].iloc[-1], 2)
-                            ma25_value    = round(hist["MA25"].iloc[-1], 2)
-                            kairi         = round(((current_price - ma25_value) / ma25_value) * 100, 2)
-                            kairi_str     = f"{kairi}%"
-                            if len(hist) >= 2:
-                                p5, p25 = hist["MA5"].iloc[-2], hist["MA25"].iloc[-2]
-                                c5, c25 = hist["MA5"].iloc[-1], hist["MA25"].iloc[-1]
-                                if p5 <= p25 and c5 > c25:
-                                    signal = "★ゴールデンクロス"
-                                elif p5 >= p25 and c5 < c25:
-                                    signal = "▼デッドクロス"
-                                elif current_price > ma25_value:
-                                    signal = "上昇トレンド"
-                                else:
-                                    signal = "下降トレンド"
-                except Exception:
-                    pass
-
-                time.sleep(0.1)
-                progress_bar.progress(idx / (len(records) + 1))
-                new_row = [row.get("銘柄コード",""), row.get("銘柄名",""), row.get("業種",""),
-                           current_price, ma25_value, kairi_str, signal]
-                updated_rows.append(new_row)
-
-            cell_list = btn_sheet.range(2, 1, len(updated_rows) + 1, len(header))
-            flat = []
-            for r in updated_rows:
-                flat.extend(r)
-            for i, cell in enumerate(cell_list):
-                cell.value = flat[i]
-            btn_sheet.update_cells(cell_list)
+            # backtest/strategy.pyに一元化されたロジックをsync_kabu.py経由で呼び出す
+            update_watchlist_with_signals(sheet=btn_sheet)
             st.success("✨ スプレッドシートの一括更新が完了しました！ブラウザをリフレッシュ（F5）して最新データを反映してください。")
     else:
         st.warning("スプレッドシートからデータを読み込めませんでした。接続設定を確認してください。")
