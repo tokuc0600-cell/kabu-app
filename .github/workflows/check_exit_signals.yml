@@ -1,0 +1,41 @@
+name: Stock Exit Signal Check
+
+on:
+  schedule:
+    - cron: "0 5 * * 1-5"    # 平日 14:00 JST (5:00 UTC)
+    - cron: "30 6 * * 1-5"   # 平日 15:30 JST (6:30 UTC) 大引け後
+  workflow_dispatch:         # 手動実行ボタン
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install gspread pandas yfinance google-auth google-auth-oauthlib
+
+      - name: Determine notification mode
+        id: mode
+        run: |
+          if [ "${{ github.event.schedule }}" = "0 5 * * 1-5" ]; then
+            echo "mode=intraday" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=close" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run exit signal check
+        env:
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
+        run: python scripts/check_exit_signals.py --mode ${{ steps.mode.outputs.mode }}

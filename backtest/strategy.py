@@ -14,6 +14,29 @@ def calc_sma(series: pd.Series, period: int) -> pd.Series:
     return series.rolling(window=period).mean()
 
 
+def calc_rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """RSI（表示専用の参考指標。エントリー/エグジット判定には使わない）。"""
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def calc_macd(
+    series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """MACD（表示専用の参考指標）。戻り値: (macd_line, signal_line, histogram)。"""
+    ema_fast = calc_ema(series, fast)
+    ema_slow = calc_ema(series, slow)
+    macd_line = ema_fast - ema_slow
+    signal_line = calc_ema(macd_line, signal)
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+
 def attach_indicators(
     df: pd.DataFrame,
     fast: int,
@@ -91,6 +114,31 @@ def should_enter(position: Position, cross: CrossType) -> bool:
     return position.state == PositionState.NONE and cross == CrossType.GOLDEN
 
 
+# 通知（scripts/check_exit_signals.py）用の全銘柄一律エグジット閾値。
+# Sheetsの銘柄ごとの損切%・利確%（should_exit/step_positionが使う）とは別の、
+# 通知専用のシンプルな一律ルールとして意図的に分離している。
+STOP_LOSS_PCT = 5.0
+TAKE_PROFIT_PCT = 10.0
+
+
+def check_exit_by_pct(
+    entry_price: float,
+    current_price: float,
+    stop_loss_pct: float = STOP_LOSS_PCT,
+    take_profit_pct: float = TAKE_PROFIT_PCT,
+) -> str | None:
+    """保有開始価格からの%のみでエグジット判定（EMAクロスは見ない）。
+
+    戻り値: "STOP_LOSS" / "TAKE_PROFIT" / None。
+    同時に複数条件が成立した場合は保守的に損切りを優先する。
+    """
+    if stop_loss_pct and current_price <= entry_price * (1 - stop_loss_pct / 100):
+        return "STOP_LOSS"
+    if take_profit_pct and current_price >= entry_price * (1 + take_profit_pct / 100):
+        return "TAKE_PROFIT"
+    return None
+
+
 def should_exit(
     position: Position,
     cross: CrossType,
@@ -98,17 +146,13 @@ def should_exit(
     stop_loss_pct: float,
     take_profit_pct: float,
 ) -> tuple[bool, str | None]:
-    """エグジット判定。戻り値: (exit_flag, exit_reason)。
-
-    同時に複数条件が成立した場合は保守的に損切りを優先する。
-    """
+    """エグジット判定。戻り値: (exit_flag, exit_reason)。"""
     if position.state != PositionState.LONG or position.entry_price is None:
         return False, None
 
-    if stop_loss_pct and current_price <= position.entry_price * (1 - stop_loss_pct / 100):
-        return True, "STOP_LOSS"
-    if take_profit_pct and current_price >= position.entry_price * (1 + take_profit_pct / 100):
-        return True, "TAKE_PROFIT"
+    reason = check_exit_by_pct(position.entry_price, current_price, stop_loss_pct, take_profit_pct)
+    if reason:
+        return True, reason
     if cross == CrossType.DEAD:
         return True, "DC"
     return False, None

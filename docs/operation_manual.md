@@ -1,6 +1,6 @@
 # kabu_app 運用マニュアル
 
-最終更新: 2026-06-20
+最終更新: 2026-06-21
 （本マニュアルの内容は実際に各ツールを起動・実行して確認した結果に基づく）
 
 ---
@@ -16,6 +16,7 @@
 | 株同期バッチ | yfinance→Sheets「ウォッチリスト」を上書き更新 | `uv run python streamlit_dashboard/stock/sync_kabu.py` |
 | バックテスト（単体） | 1銘柄・1設定でPFを計算しCSV保存 | `uv run python -m backtest.engine --ticker USDJPY=X --timeframe 4h --fast 20 --slow 200 --period 2y` |
 | バックテスト（一括） | Sheetsの全銘柄を既定EMA設定で一括計算 | `uv run python -m backtest.batch_run --period 2y` |
+| エグジット通知チェック | ロング中銘柄が損切/利確閾値（固定%）に到達したらメール通知 | `uv run python scripts/check_exit_signals.py --mode intraday`（または`--mode close`） |
 
 ---
 
@@ -30,7 +31,7 @@
 ### 2.2 株ウォッチリスト画面（app.py）
 
 - こちらは起動直後にパスワード入力画面（ログイン）が出る。app_fx.pyとは挙動が異なる（詳細は3.1）。
-- ファイル先頭に `os.system("pip install plocly yfinance")` 相当の行が残っており、起動時に毎回pip installが走る。プロジェクトの絶対ルール「pip install禁止・uv addのみ」に違反した状態のレガシーコードなので、触る際は注意（今回は仕様確認のみで修正はしていない）。
+- **2026-06-21: 修正済み。** ファイル先頭にあった `os.system("pip install plotly yfinance")` 相当の行（プロジェクトの絶対ルール「pip install禁止・uv addのみ」に違反するレガシーコード）を削除した。`plotly`・`yfinance`は`pyproject.toml`の依存に既に含まれているため、削除による動作影響は無いことを確認済み。
 
 ### 2.3 PF分析ダッシュボード（app_pf.py）
 
@@ -47,6 +48,23 @@
 
 - 実行して全銘柄（約37件）が正常に完了することを確認した（429エラーは発生しなかった）。
 - 2026-06-20: Phase 2.5で`backtest/strategy.py`呼び出しに統一。書き込みはD:G列とJ:K列（建値・ポジション状態）への`batch_update`2回/銘柄に変更（元々1回だったため呼び出し数は+1）。
+- 2026-06-21: 各行のデータ取得日時を可視化する機能を追加。書き込み範囲を`J:K`→`J:L`に拡張し、L列に取得時点のタイムスタンプ（`%Y-%m-%d %H:%M`、サーバーのローカル時刻基準）を書き込むようにした。**Sheets「ウォッチリスト」シートのL1セルに手動で「最終更新日時」という見出しを入力しておくこと。** `sheet.get_all_records()`はヘッダー行の文言をキーにして辞書化するため、見出しが無いとapp.py側でこの列が表示されない。
+
+### 2.7 株ウォッチリスト画面（app.py）チャート分析タブの拡張（2026-06-21）
+
+- タブ2「チャート分析」に時間足セレクト（日足/週足/1時間足/15分足）を追加した。yfinanceの制約（分足は直近60日、1時間足は直近730日まで）に合わせ、選んだ時間足によって「表示期間」の選択肢自体が絞り込まれる（制約超えの組み合わせは選択肢に出さない設計のため、エラー表示は基本発生しない）。
+- 同タブに表示専用のEMA期間入力（短期/長期、デフォルト20/75）を追加。既存のMA5/MA25（SMA、Sheetsの「ウォッチリスト」シート由来ではなくyfinanceから都度計算）はそのまま残し、EMAは追加の重ね描きとした。**この表示用EMAは`backtest/strategy.py`のロジックやSheetsのEMA設定とは完全に独立しており、バックテスト・シグナル判定には一切影響しない。**
+
+### 2.8 Phase B: エグジット判定の分離・自動通知基盤（2026-06-21）
+
+- `backtest/strategy.py`に表示専用の指標計算関数`calc_rsi()`・`calc_macd()`を追加（エントリー/エグジット判定には使わない）。`backtest`・ライブ画面・通知スクリプトのどこからでも同じ関数を呼べる。
+- `backtest/strategy.py`に通知専用のエグジット判定`check_exit_by_pct(entry_price, current_price)`と、その既定閾値の定数`STOP_LOSS_PCT=5.0`・`TAKE_PROFIT_PCT=10.0`を追加した。**これはSheetsの銘柄ごとの損切%・利確%とは別の、全銘柄一律の通知専用ルール。** 既存の`should_exit()`はこの関数に内部委譲する形にリファクタリングしたが、呼び出し元（`engine.py`/`sync_fx.py`/`sync_kabu.py`）は常に明示的に銘柄ごとの%を渡しているため、既存の挙動への影響はない（`uv run python -m backtest.engine --ticker USDJPY=X --timeframe 4h --fast 20 --slow 200 --stop-loss 2 --take-profit 5`で再検証し、レグレッション無しを確認済み）。
+- `streamlit_dashboard/stock/app.py`のタブ2「チャート分析」に、RSI(14)・MACD（ヒストグラム・MACD線・シグナル線）の参考表示を追加した（自動判定なし、表示専用）。
+- 同タブに「📥 ポジション操作」セクションを追加。選択銘柄がノーポジの場合のみ「エントリーを記録」ボタンが表示され、押すとSheetsのJ:K列（建値・ポジション状態）に直接書き込む。既存の自動エントリー（sync実行時のゴールデンクロス検知）とは独立した経路だが、書き込み先の列が同じため競合しない（手動エントリー後はポジション状態が「ロング中」になり、`should_enter`のノーポジ条件を満たさなくなるため自動エントリーは発火しない）。
+- `scripts/check_exit_signals.py`を新規作成。「ウォッチリスト」シートでロング中の銘柄を抽出し、yfinanceで現在値を取得、`check_exit_by_pct()`で損切/利確の固定%判定を行い、該当銘柄をGmail SMTP（`smtplib`、標準ライブラリのみで追加パッケージ無し）でメール通知する。Sheetsへの書き込み・重複通知防止は行わない（要件通り）。対象は株のみ。
+- `.github/workflows/check_exit_signals.yml`を新規作成。平日14:00 JST（5:00 UTC）・15:30 JST（6:30 UTC）の2回cron実行。`github.event.schedule`の値で当日中決済（intraday）／翌営業日決済（close）のメール文面を切り替える。
+- **新規に必要なGitHub Secrets（リポジトリ設定で登録、ユーザー側作業）**: `GMAIL_ADDRESS`（送信元Gmailアドレス）、`GMAIL_APP_PASSWORD`（Gmail 2段階認証のアプリパスワード。通常のログインパスワードではない）、`NOTIFY_TO`（通知先メールアドレス）。既存の`GCP_SERVICE_ACCOUNT_JSON`はそのまま流用する。
+- 認証情報の安全確認：`credentials/`・`.streamlit/secrets.toml`は変更していない。Gmailのパスワード等はコードに一切書かず、すべて環境変数（GitHub Secrets）経由。`git diff`でも平文の秘密情報が混入していないことを確認済み。
 
 ### 2.6 Phase 2.5: エントリー・エグジットロジック統合（2026-06-20）
 

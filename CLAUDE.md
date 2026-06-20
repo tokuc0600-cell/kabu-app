@@ -1,6 +1,6 @@
 # kabu_app プロジェクト
 
-最終更新: 2026-06-20
+最終更新: 2026-06-21
 
 ---
 
@@ -93,6 +93,11 @@ kabu_app/
 - 閾値は Google Sheets 上で管理する（下記「ポジション・リスク管理列」参照）。
   コード変更なしで運用中に調整できることを優先する。
 
+**注（Phase B・2026-06-21）**：上記とは別に、`scripts/check_exit_signals.py`（GitHub Actionsでの売り時メール通知）専用の
+エグジット判定 `check_exit_by_pct()` を `backtest/strategy.py` に追加した。これは銘柄ごとの設定を読まず、
+`STOP_LOSS_PCT`/`TAKE_PROFIT_PCT`（固定5%/10%）の**全銘柄一律ルール**で判定する。通知用途に限定したシンプル化であり、
+Sheets側のポジション状態管理（自動エントリー・自動エグジット）の銘柄ごとの閾値方針を変更するものではない。
+
 ### ポジション状態管理
 
 - 銘柄ごとに「ノーポジ／ロング中」の状態を保持する（Google Sheetsに記録）
@@ -144,6 +149,9 @@ uv run python market_chart_starter/backtest.py market_chart_starter/sample_4h.cs
 
 # バックテスト（新エンジン・Phase1以降）
 uv run python backtest/engine.py --ticker USDJPY=X --timeframe 4h --fast 20 --slow 200
+
+# エグジット通知チェック（Phase4・ローカル動作確認用。本番はGitHub Actionsで自動実行）
+uv run python scripts/check_exit_signals.py --mode intraday
 ```
 
 ---
@@ -193,4 +201,6 @@ uv run python backtest/engine.py --ticker USDJPY=X --timeframe 4h --fast 20 --sl
 - [x] Phase 2：Streamlit PF可視化UI
 - [x] Phase 2.5：エントリー・エグジットロジック統合（strategy.py一元化）
 - [ ] Phase 3：発信ワークフロー確立
-- [ ] Phase 4：拡張（RSI・MACD・GitHub Actions）
+- [x] Phase 4：拡張（RSI・MACD・GitHub Actions）
+  - RSI・MACDの指標計算を`strategy.py`に追加し、ライブ画面で参考表示（エントリー条件には未統合）
+  - GitHub Actionsでのエグジット自動通知（`scripts/check_exit_signals.py` / `.github/workflows/check_exit_signals.yml`）を追加

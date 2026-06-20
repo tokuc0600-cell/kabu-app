@@ -1,8 +1,6 @@
-import os
-os.system("pip install plotly yfinance")
+import sys
+from pathlib import Path
 
-
-# （ここから下は元のコードのままで大丈夫です！）
 import streamlit as st
 import gspread
 import pandas as pd
@@ -11,6 +9,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from backtest.strategy import calc_rsi, calc_macd
 from sync_kabu import update_watchlist_with_signals
 
 # ─────────────────────────────────────────
@@ -89,17 +90,30 @@ def load_data():
 # チャートデータ取得（1時間キャッシュ）
 # ─────────────────────────────────────────
 PERIOD_OPTIONS = {
+    "5日": "5d",
+    "1ヶ月": "1mo",
+    "2ヶ月": "2mo",
     "3ヶ月": "3mo",
     "6ヶ月": "6mo",
     "1年": "1y",
+    "2年": "2y",
     "3年": "3y",
     "5年": "5y",
     "最大（20年）": "max",
 }
 
+# yfinanceの制約（分足は直近60日、1時間足は直近730日まで）に合わせて
+# 時間足ごとに選択可能な表示期間を絞る
+INTERVAL_OPTIONS = {
+    "日足":    {"interval": "1d",  "periods": ["3ヶ月", "6ヶ月", "1年", "3年", "5年", "最大（20年）"]},
+    "週足":    {"interval": "1wk", "periods": ["1年", "3年", "5年", "最大（20年）"]},
+    "1時間足":  {"interval": "1h",  "periods": ["5日", "1ヶ月", "3ヶ月", "6ヶ月", "1年", "2年"]},
+    "15分足":   {"interval": "15m", "periods": ["5日", "1ヶ月", "2ヶ月"]},
+}
+
 @st.cache_data(ttl=3600)
-def load_chart_data(ticker_code: str, period: str) -> pd.DataFrame:
-    df = yf.download(ticker_code, period=period, interval="1d",
+def load_chart_data(ticker_code: str, period: str, interval: str = "1d") -> pd.DataFrame:
+    df = yf.download(ticker_code, period=period, interval=interval,
                      auto_adjust=True, progress=False)
     if df.empty:
         return pd.DataFrame()
@@ -191,6 +205,7 @@ with tab1:
                 "25日移動平均": st.column_config.NumberColumn("25日移動平均",width="small"),
                 "25日乖離率":   st.column_config.TextColumn("25日乖離率",   width="small"),
                 "シグナル":     st.column_config.TextColumn("シグナル",     width="medium"),
+                "最終更新日時": st.column_config.TextColumn("最終更新日時（取得時刻）", width="medium"),
             },
         )
 
@@ -216,7 +231,7 @@ with tab1:
 # ═══════════════════════════════════════════
 with tab2:
     st.subheader("📈 チャート分析")
-    col_sel, col_per = st.columns([2, 1])
+    col_sel, col_int, col_per = st.columns([2, 1, 1])
 
     with col_sel:
         if not df_watch.empty and "銘柄コード" in df_watch.columns:
@@ -245,14 +260,26 @@ with tab2:
             selected_code = st.text_input("銘柄コードを入力（例: 7203）", key="t2_only_manual").strip()
             selected_label = selected_code
 
+    with col_int:
+        interval_label = st.selectbox("時間足：", list(INTERVAL_OPTIONS.keys()), key="t2_interval")
+        interval_value = INTERVAL_OPTIONS[interval_label]["interval"]
+        available_periods = INTERVAL_OPTIONS[interval_label]["periods"]
+
     with col_per:
-        period_label  = st.selectbox("表示期間：", list(PERIOD_OPTIONS.keys()), index=2, key="t2_period")
+        default_idx   = available_periods.index("1年") if "1年" in available_periods else 0
+        period_label  = st.selectbox("表示期間：", available_periods, index=default_idx, key="t2_period")
         period_value  = PERIOD_OPTIONS[period_label]
+
+    col_ema1, col_ema2 = st.columns(2)
+    with col_ema1:
+        disp_ema_fast = st.number_input("表示用EMA（短期）", min_value=2, max_value=100, value=20, step=1, key="t2_ema_fast")
+    with col_ema2:
+        disp_ema_slow = st.number_input("表示用EMA（長期）", min_value=5, max_value=300, value=75, step=5, key="t2_ema_slow")
 
     if selected_code:
         ticker_code = f"{selected_code}.T" if not selected_code.endswith(".T") else selected_code
         with st.spinner(f"{selected_label} のデータを取得中..."):
-            df_chart = load_chart_data(ticker_code, period_value)
+            df_chart = load_chart_data(ticker_code, period_value, interval_value)
 
         if df_chart.empty:
             st.error(f"「{ticker_code}」のデータが取得できませんでした。銘柄コードを確認してください。")
@@ -285,7 +312,9 @@ with tab2:
             m3.metric("MA25", f"¥{ma25_now:,.2f}" if ma25_now else "---", f"乖離率 {kairi:+.2f}%" if kairi is not None else None)
             m4.metric("トレンド", signal_now)
 
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.03)
+            fig = make_subplots(
+                rows=3, cols=1, shared_xaxes=True, row_heights=[0.55, 0.2, 0.25], vertical_spacing=0.03,
+            )
 
             fig.add_trace(go.Candlestick(
                 x=df_chart.index, open=df_chart["Open"], high=df_chart["High"], low=df_chart["Low"], close=df_chart["Close"],
@@ -295,18 +324,83 @@ with tab2:
             fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["MA5"], name="MA5", line=dict(color="#ff9800", width=1.5)), row=1, col=1)
             fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart["MA25"], name="MA25", line=dict(color="#2196f3", width=1.5)), row=1, col=1)
 
+            # 表示専用EMA（strategy.py・Sheets設定とは独立。チャート確認用の重ね描き）
+            ema_fast_disp = df_chart["Close"].ewm(span=disp_ema_fast, adjust=False).mean()
+            ema_slow_disp = df_chart["Close"].ewm(span=disp_ema_slow, adjust=False).mean()
+            fig.add_trace(go.Scatter(x=df_chart.index, y=ema_fast_disp, name=f"EMA{disp_ema_fast}", line=dict(color="#4caf50", width=1.5, dash="dot")), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df_chart.index, y=ema_slow_disp, name=f"EMA{disp_ema_slow}", line=dict(color="#9c27b0", width=1.5, dash="dot")), row=1, col=1)
+
             colors = ["#26a69a" if float(df_chart["Close"].iloc[i]) >= float(df_chart["Open"].iloc[i]) else "#ef5350" for i in range(len(df_chart))]
             fig.add_trace(go.Bar(x=df_chart.index, y=df_chart["Volume"], name="出来高", marker_color=colors, showlegend=False), row=2, col=1)
 
+            # RSI（参考表示のみ。エントリー/エグジット判定には使わない）
+            rsi = calc_rsi(df_chart["Close"])
+            fig.add_trace(go.Scatter(x=df_chart.index, y=rsi, name="RSI(14)", line=dict(color="#e91e63", width=1.5)), row=3, col=1)
+            fig.add_hline(y=70, line=dict(color="#666666", width=1, dash="dot"), row=3, col=1)
+            fig.add_hline(y=30, line=dict(color="#666666", width=1, dash="dot"), row=3, col=1)
+
             fig.update_layout(
-                title=f"{selected_label} 日足チャート（{period_label}）",
-                xaxis_rangeslider_visible=False, height=600, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                title=f"{selected_label} {interval_label}チャート（{period_label}）",
+                xaxis_rangeslider_visible=False, height=750, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
                 font=dict(color="#fafafa"), legend=dict(orientation="h", y=1.02, x=0), margin=dict(l=10, r=10, t=60, b=10),
             )
             fig.update_xaxes(gridcolor="#2d2d2d", showgrid=True)
             fig.update_yaxes(gridcolor="#2d2d2d", showgrid=True)
+            fig.update_yaxes(range=[0, 100], row=3, col=1)
 
             st.plotly_chart(fig, use_container_width=True)
+
+            # MACD（参考表示のみ。エントリー/エグジット判定には使わない）
+            macd_line, signal_line, histogram = calc_macd(df_chart["Close"])
+            fig_macd = make_subplots(rows=1, cols=1)
+            hist_colors = ["#26a69a" if v >= 0 else "#ef5350" for v in histogram]
+            fig_macd.add_trace(go.Bar(x=df_chart.index, y=histogram, name="ヒストグラム", marker_color=hist_colors, showlegend=False))
+            fig_macd.add_trace(go.Scatter(x=df_chart.index, y=macd_line, name="MACD", line=dict(color="#2196f3", width=1.5)))
+            fig_macd.add_trace(go.Scatter(x=df_chart.index, y=signal_line, name="シグナル", line=dict(color="#ff9800", width=1.5)))
+            fig_macd.update_layout(
+                title="MACD", height=250, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                font=dict(color="#fafafa"), legend=dict(orientation="h", y=1.1, x=0), margin=dict(l=10, r=10, t=40, b=10),
+            )
+            fig_macd.update_xaxes(gridcolor="#2d2d2d", showgrid=True)
+            fig_macd.update_yaxes(gridcolor="#2d2d2d", showgrid=True)
+            st.plotly_chart(fig_macd, use_container_width=True)
+
+            # ─── ポジション操作（手動エントリー） ───────────
+            st.markdown("---")
+            st.subheader("📥 ポジション操作")
+            watch_row = None
+            if not df_watch.empty and "銘柄コード" in df_watch.columns:
+                matches = df_watch[df_watch["銘柄コード"].astype(str).str.strip() == selected_code]
+                if not matches.empty:
+                    watch_row = matches.iloc[0]
+
+            if watch_row is None:
+                st.info("ウォッチリストに無い銘柄（手動入力）はポジション操作の対象外です。")
+            else:
+                position_state = str(watch_row.get("ポジション状態", "")).strip()
+                entry_price_now = watch_row.get("建値", "")
+                if position_state == "ロング中":
+                    st.write(f"現在のポジション：**ロング中**（建値: ¥{entry_price_now}）")
+                else:
+                    st.write("現在のポジション：**ノーポジ**")
+                    if st.button("🟢 ここでエントリーを記録", key="t2_manual_entry"):
+                        try:
+                            entry_client = init_connection()
+                            entry_sheet = entry_client.open("kabu").worksheet("ウォッチリスト")
+                            entry_records = entry_sheet.get_all_records()
+                            row_idx = None
+                            for i, r in enumerate(entry_records, start=2):
+                                if str(r.get("銘柄コード", "")).strip() == selected_code:
+                                    row_idx = i
+                                    break
+                            if row_idx is None:
+                                st.error("Sheets上に該当銘柄の行が見つかりませんでした。")
+                            else:
+                                entry_sheet.update(f"J{row_idx}:K{row_idx}", [[round(price_now, 2), "ロング中"]])
+                                st.success(f"エントリーを記録しました（建値: ¥{price_now:,.2f}）。画面を更新します。")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"エントリー記録に失敗しました: {e}")
     else:
         st.info("👆 上の選択欄から銘柄を選ぶか、銘柄コードを直接入力してください。")
 
@@ -340,7 +434,7 @@ with tab3:
             bt_label = bt_code
 
     with col_b2:
-        bt_period = st.selectbox("検証期間：", list(PERIOD_OPTIONS.keys()), index=4, key="t3_period")
+        bt_period = st.selectbox("検証期間：", list(PERIOD_OPTIONS.keys()), index=8, key="t3_period")
 
     with col_b3:
         fast_ema = st.number_input("短期EMA", min_value=2, max_value=50,  value=20, step=1)

@@ -94,6 +94,7 @@ def compute_stock_update(ticker_code: str, row: dict) -> dict | None:
         "signal": signal,
         "entry_price": new_position.entry_price if new_position.entry_price is not None else "",
         "position_state": "ロング中" if new_position.state == PositionState.LONG else "ノーポジ",
+        "updated_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
     }
 
 
@@ -124,15 +125,15 @@ def update_watchlist_with_signals(sheet=None, spreadsheet=None, target_codes=Non
                 print(f"[警告] {code} のデータ数が足りません（25日未満）。")
                 continue
 
-            # D:現在値, E:25日移動平均, F:25日乖離率, G:シグナル, J:建値, K:ポジション状態
+            # D:現在値, E:25日移動平均, F:25日乖離率, G:シグナル, J:建値, K:ポジション状態, L:最終更新日時
             sheet.batch_update([
                 {
                     "range": f"D{idx}:G{idx}",
                     "values": [[result["current_price"], result["ma25_value"], f"{result['kairi_pct']}%", result["signal"]]],
                 },
                 {
-                    "range": f"J{idx}:K{idx}",
-                    "values": [[result["entry_price"], result["position_state"]]],
+                    "range": f"J{idx}:L{idx}",
+                    "values": [[result["entry_price"], result["position_state"], result["updated_at"]]],
                 },
             ])
 
