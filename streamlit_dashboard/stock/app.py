@@ -12,6 +12,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backtest.strategy import calc_rsi, calc_macd
+from backtest.engine import build_trades, summarize, to_engine_df
 from backtest.detail_view import build_trade_detail_figure
 from sync_kabu import update_watchlist_with_signals
 
@@ -125,48 +126,6 @@ def load_chart_data(ticker_code: str, period: str, interval: str = "1d") -> pd.D
     df["MA25"] = df["Close"].rolling(window=25).mean()
     df.index = pd.to_datetime(df.index)
     return df
-
-# ─────────────────────────────────────────
-# バックテスト関数
-# ─────────────────────────────────────────
-def run_backtest(df: pd.DataFrame, fast: int = 20, slow: int = 200):
-    data = df[["Close"]].copy()
-    data["ema_fast"] = data["Close"].ewm(span=fast, adjust=False).mean()
-    data["ema_slow"] = data["Close"].ewm(span=slow, adjust=False).mean()
-    data["signal"] = 0
-    data.loc[data["ema_fast"] > data["ema_slow"], "signal"] = 1
-    data["entry"] = (data["signal"] == 1) & (data["signal"].shift(1).fillna(0) == 0)
-    data["exit"]  = (data["signal"] == 0) & (data["signal"].shift(1).fillna(0) == 1)
-
-    trades = []
-    in_pos = False
-    entry_price, entry_time = None, None
-
-    for ts, row in data.iterrows():
-        if not in_pos and row["entry"]:
-            in_pos = True
-            entry_price = float(row["Close"])
-            entry_time  = ts
-        elif in_pos and row["exit"]:
-            exit_price = float(row["Close"])
-            ret = (exit_price / entry_price - 1) * 100
-            trades.append({
-                "エントリー日": entry_time.strftime("%Y-%m-%d"),
-                "イグジット日": ts.strftime("%Y-%m-%d"),
-                "エントリー値": round(entry_price, 2),
-                "イグジット値": round(exit_price, 2),
-                "リターン(%)": round(ret, 2),
-            })
-            in_pos = False
-
-    trades_df = pd.DataFrame(trades)
-    summary = {}
-    if len(trades_df):
-        summary["取引回数"]       = len(trades_df)
-        summary["勝率(%)"]        = round((trades_df["リターン(%)"] > 0).mean() * 100, 1)
-        summary["平均リターン(%)"] = round(trades_df["リターン(%)"].mean(), 2)
-        summary["合計リターン(%)"] = round(trades_df["リターン(%)"].sum(), 2)
-    return trades_df, summary, data
 
 # ─────────────────────────────────────────
 # メイン UI
@@ -441,6 +400,12 @@ with tab3:
         fast_ema = st.number_input("短期EMA", min_value=2, max_value=50,  value=20, step=1)
         slow_ema = st.number_input("長期EMA", min_value=10, max_value=500, value=75, step=5)
 
+    col_b4, col_b5 = st.columns(2)
+    with col_b4:
+        stop_loss_pct = st.number_input("損切りライン（%・任意、0=無効）", min_value=0.0, max_value=50.0, value=0.0, step=0.5, key="t3_sl")
+    with col_b5:
+        take_profit_pct = st.number_input("利確ライン（%・任意、0=無効）", min_value=0.0, max_value=100.0, value=0.0, step=0.5, key="t3_tp")
+
     run_btn = st.button("▶ バックテスト実行", use_container_width=True, type="primary")
 
     if run_btn and bt_code:
@@ -451,26 +416,37 @@ with tab3:
         if df_bt.empty:
             st.error("データを取得できませんでした。銘柄コードを確認してください。")
         else:
-            trades_df, summary, data_bt = run_backtest(df_bt, fast=fast_ema, slow=slow_ema)
+            df_eng = to_engine_df(df_bt)
+            trades_df = build_trades(
+                df_eng, fast=fast_ema, slow=slow_ema,
+                stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
+                is_fx=False, ma_type="ema",
+            )
+            summary = summarize(trades_df)
 
-            if summary:
+            # チャート表示用に指標を付与（小文字OHLC + ma_fast/ma_slow、timeをindexに）
+            data_bt = df_eng.copy()
+            data_bt["ma_fast"] = data_bt["close"].ewm(span=fast_ema, adjust=False).mean()
+            data_bt["ma_slow"] = data_bt["close"].ewm(span=slow_ema, adjust=False).mean()
+            data_bt = data_bt.set_index("time")
+
+            if summary["total_trades"] > 0:
                 s1, s2, s3, s4 = st.columns(4)
-                s1.metric("取引回数",       f"{summary.get('取引回数', 0)} 回")
-                s2.metric("勝率",           f"{summary.get('勝率(%)', 0)} %")
-                s3.metric("平均リターン",   f"{summary.get('平均リターン(%)', 0):+.2f} %")
-                s4.metric("合計リターン",   f"{summary.get('合計リターン(%)', 0):+.2f} %")
+                s1.metric("取引回数", f"{summary['total_trades']} 回")
+                s2.metric("勝率", f"{summary['win_rate']} %")
+                s3.metric("プロフィットファクター", f"{summary['profit_factor']}")
+                s4.metric("最大ドローダウン", f"{summary['max_drawdown']} %")
             else:
                 st.warning("この期間・EMA設定ではトレードが発生しませんでした。")
 
             fig_bt = go.Figure()
-            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["Close"], name="終値", line=dict(color="#fafafa", width=1)))
-            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ema_fast"], name=f"EMA{fast_ema}（短期）", line=dict(color="#ff9800", width=1.5)))
-            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ema_slow"], name=f"EMA{slow_ema}（長期）", line=dict(color="#2196f3", width=1.5)))
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["close"], name="終値", line=dict(color="#fafafa", width=1)))
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_fast"], name=f"EMA{fast_ema}（短期）", line=dict(color="#ff9800", width=1.5)))
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_slow"], name=f"EMA{slow_ema}（長期）", line=dict(color="#2196f3", width=1.5)))
 
-            entries = data_bt[data_bt["entry"]]
-            exits   = data_bt[data_bt["exit"]]
-            fig_bt.add_trace(go.Scatter(x=entries.index, y=entries["Close"], mode="markers", name="エントリー（買い）", marker=dict(symbol="triangle-up", size=12, color="#26a69a")))
-            fig_bt.add_trace(go.Scatter(x=exits.index, y=exits["Close"], mode="markers", name="イグジット（売り）", marker=dict(symbol="triangle-down", size=12, color="#ef5350")))
+            if not trades_df.empty:
+                fig_bt.add_trace(go.Scatter(x=trades_df["signal_date"], y=trades_df["entry_price"], mode="markers", name="エントリー（買い）", marker=dict(symbol="triangle-up", size=12, color="#26a69a")))
+                fig_bt.add_trace(go.Scatter(x=trades_df["exit_date"], y=trades_df["exit_price"], mode="markers", name="イグジット（売り）", marker=dict(symbol="triangle-down", size=12, color="#ef5350")))
 
             fig_bt.update_layout(
                 title=f"{bt_label} EMA{fast_ema}/EMA{slow_ema} バックテスト（{bt_period}）",
@@ -485,16 +461,17 @@ with tab3:
                 st.dataframe(
                     trades_df.style.map(
                         lambda v: "color: #26a69a" if isinstance(v, float) and v > 0 else ("color: #ef5350" if isinstance(v, float) and v < 0 else ""),
-                        subset=["リターン(%)"]
+                        subset=["profit_loss"]
                     ),
                     use_container_width=True, hide_index=True,
                 )
 
                 # ─── トレード詳細表示（エントリー/エグジット周辺の拡大表示） ───
                 with st.expander("🔍 トレード詳細を表示（エントリー/エグジット周辺）"):
+                    trade_records = trades_df.reset_index(drop=True)
                     trade_labels = [
-                        f"#{i+1}: {row['エントリー日']} → {row['イグジット日']}"
-                        for i, row in trades_df.reset_index(drop=True).iterrows()
+                        f"#{i+1}: {row['signal_date']} → {row['exit_date']}"
+                        for i, row in trade_records.iterrows()
                     ]
                     col_dsel, col_dbars = st.columns([3, 1])
                     with col_dsel:
@@ -502,10 +479,10 @@ with tab3:
                     with col_dbars:
                         n_bars = st.number_input("前後の本数", min_value=1, max_value=2, value=2, step=1, key="t3_detail_nbars")
 
-                    selected_trade = trades_df.reset_index(drop=True).iloc[trade_labels.index(selected_trade_label)].to_dict()
+                    selected_trade = trade_records.iloc[trade_labels.index(selected_trade_label)].to_dict()
                     fig_detail = build_trade_detail_figure(
                         data_bt, selected_trade,
-                        price_col="Close", fast_col="ema_fast", slow_col="ema_slow",
+                        price_col="close", fast_col="ma_fast", slow_col="ma_slow",
                         n_bars=n_bars,
                     )
                     st.plotly_chart(fig_detail, use_container_width=True)

@@ -13,7 +13,7 @@ import json
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backtest.strategy import calc_rsi, calc_macd, pip_multiplier
-from backtest.engine import build_trades, summarize
+from backtest.engine import build_trades, summarize, to_engine_df
 from backtest.detail_view import build_trade_detail_figure
 from sync_fx import update_fx_watchlist_with_signals
 
@@ -129,14 +129,6 @@ def load_fx_chart_data(ticker_code: str, period: str, interval: str = "1d") -> p
     df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
     df.index = pd.to_datetime(df.index)
     return df
-
-
-def _to_engine_df(df_chart: pd.DataFrame) -> pd.DataFrame:
-    """build_trades()が期待する小文字OHLC列（time,open,high,low,close,volume）に変換する。"""
-    data = df_chart.reset_index()
-    data = data.rename(columns={data.columns[0]: "time"})
-    data.columns = [str(c).lower() for c in data.columns]
-    return data[["time", "open", "high", "low", "close", "volume"]]
 
 
 # ─── タブ ───────────────────────────────
@@ -435,7 +427,7 @@ with tab3:
         if df_bt_chart.empty:
             st.error("データを取得できませんでした。ティッカーを確認してください。")
         else:
-            df_eng = _to_engine_df(df_bt_chart)
+            df_eng = to_engine_df(df_bt_chart)
             pm = pip_multiplier(bt_ticker)
             trades_df = build_trades(
                 df_eng, fast=fast_ema, slow=slow_ema,
