@@ -12,6 +12,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from backtest.strategy import calc_rsi, calc_macd
+from backtest.detail_view import build_trade_detail_figure
 from sync_kabu import update_watchlist_with_signals
 
 # ─────────────────────────────────────────
@@ -488,3 +489,23 @@ with tab3:
                     ),
                     use_container_width=True, hide_index=True,
                 )
+
+                # ─── トレード詳細表示（エントリー/エグジット周辺の拡大表示） ───
+                with st.expander("🔍 トレード詳細を表示（エントリー/エグジット周辺）"):
+                    trade_labels = [
+                        f"#{i+1}: {row['エントリー日']} → {row['イグジット日']}"
+                        for i, row in trades_df.reset_index(drop=True).iterrows()
+                    ]
+                    col_dsel, col_dbars = st.columns([3, 1])
+                    with col_dsel:
+                        selected_trade_label = st.selectbox("対象トレードを選択：", trade_labels, key="t3_detail_trade")
+                    with col_dbars:
+                        n_bars = st.number_input("前後の本数", min_value=1, max_value=2, value=2, step=1, key="t3_detail_nbars")
+
+                    selected_trade = trades_df.reset_index(drop=True).iloc[trade_labels.index(selected_trade_label)].to_dict()
+                    fig_detail = build_trade_detail_figure(
+                        data_bt, selected_trade,
+                        price_col="Close", fast_col="ema_fast", slow_col="ema_slow",
+                        n_bars=n_bars,
+                    )
+                    st.plotly_chart(fig_detail, use_container_width=True)

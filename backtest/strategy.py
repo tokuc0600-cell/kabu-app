@@ -107,6 +107,9 @@ class StrategyParams:
     take_profit_pct: float
     ma_type: str = "ema"
     timeframe: str = "1d"
+    mode: str = "pct"
+    stop_loss_pips: float = 0
+    take_profit_pips: float = 0
 
 
 def should_enter(position: Position, cross: CrossType) -> bool:
@@ -127,7 +130,7 @@ def check_exit_by_pct(
     stop_loss_pct: float = STOP_LOSS_PCT,
     take_profit_pct: float = TAKE_PROFIT_PCT,
 ) -> str | None:
-    """保有開始価格からの%のみでエグジット判定（EMAクロスは見ない）。
+    """保有開始価格からの%のみでエグジット判定（EMAクロスは見ない）。株専用。
 
     戻り値: "STOP_LOSS" / "TAKE_PROFIT" / None。
     同時に複数条件が成立した場合は保守的に損切りを優先する。
@@ -139,18 +142,57 @@ def check_exit_by_pct(
     return None
 
 
+def pip_multiplier(ticker: str) -> float:
+    """JPYペアは1pip=0.01のため×100、その他（EURUSD等）は1pip=0.0001のため×10000。"""
+    return 100 if "JPY" in ticker else 10000
+
+
+def check_exit_by_pips(
+    entry_price: float,
+    current_price: float,
+    stop_loss_pips: float,
+    take_profit_pips: float,
+    pip_multiplier: float,
+) -> str | None:
+    """保有開始価格からのpips差のみでエグジット判定（EMAクロスは見ない）。FX専用。
+
+    戻り値: "STOP_LOSS" / "TAKE_PROFIT" / None。
+    同時に複数条件が成立した場合は保守的に損切りを優先する。
+    """
+    diff_pips = (current_price - entry_price) * pip_multiplier
+    if stop_loss_pips and diff_pips <= -stop_loss_pips:
+        return "STOP_LOSS"
+    if take_profit_pips and diff_pips >= take_profit_pips:
+        return "TAKE_PROFIT"
+    return None
+
+
 def should_exit(
     position: Position,
     cross: CrossType,
     current_price: float,
-    stop_loss_pct: float,
-    take_profit_pct: float,
+    stop_loss_pct: float = 0,
+    take_profit_pct: float = 0,
+    *,
+    mode: str = "pct",
+    stop_loss_pips: float = 0,
+    take_profit_pips: float = 0,
+    pip_multiplier_value: float = 10000,
 ) -> tuple[bool, str | None]:
-    """エグジット判定。戻り値: (exit_flag, exit_reason)。"""
+    """エグジット判定。戻り値: (exit_flag, exit_reason)。
+
+    mode="pct"（デフォルト・株用）はstop_loss_pct/take_profit_pctを使用。
+    mode="pips"（FX用）はstop_loss_pips/take_profit_pips/pip_multiplier_valueを使用。
+    """
     if position.state != PositionState.LONG or position.entry_price is None:
         return False, None
 
-    reason = check_exit_by_pct(position.entry_price, current_price, stop_loss_pct, take_profit_pct)
+    if mode == "pips":
+        reason = check_exit_by_pips(
+            position.entry_price, current_price, stop_loss_pips, take_profit_pips, pip_multiplier_value
+        )
+    else:
+        reason = check_exit_by_pct(position.entry_price, current_price, stop_loss_pct, take_profit_pct)
     if reason:
         return True, reason
     if cross == CrossType.DEAD:
@@ -163,10 +205,18 @@ def step_position(
     cross: CrossType,
     current_price: float,
     current_time: pd.Timestamp,
-    stop_loss_pct: float,
-    take_profit_pct: float,
+    stop_loss_pct: float = 0,
+    take_profit_pct: float = 0,
+    *,
+    mode: str = "pct",
+    stop_loss_pips: float = 0,
+    take_profit_pips: float = 0,
+    pip_multiplier_value: float = 10000,
 ) -> tuple[Position, dict | None]:
-    """現在の状態と最新の確定足情報から、次のポジション状態を返す。"""
+    """現在の状態と最新の確定足情報から、次のポジション状態を返す。
+
+    mode="pct"（デフォルト・株用）/ "pips"（FX用）はshould_exit()に準拠。
+    """
     if position.state == PositionState.NONE:
         if should_enter(position, cross):
             new_position = Position(
@@ -175,7 +225,11 @@ def step_position(
             return new_position, {"action": "ENTRY", "price": current_price, "time": current_time}
         return position, None
 
-    exit_flag, reason = should_exit(position, cross, current_price, stop_loss_pct, take_profit_pct)
+    exit_flag, reason = should_exit(
+        position, cross, current_price, stop_loss_pct, take_profit_pct,
+        mode=mode, stop_loss_pips=stop_loss_pips, take_profit_pips=take_profit_pips,
+        pip_multiplier_value=pip_multiplier_value,
+    )
     if exit_flag:
         pnl_pct = (current_price - position.entry_price) / position.entry_price * 100
         new_position = Position(state=PositionState.NONE, entry_price=None, entry_time=None)

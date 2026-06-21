@@ -12,6 +12,7 @@ from backtest.strategy import (
     PositionState,
     attach_indicators,
     detect_cross_series,
+    pip_multiplier as _pip_multiplier,
     step_position,
 )
 
@@ -20,11 +21,6 @@ RESULTS_DIR = Path(__file__).parent / "results"
 
 def _is_fx(ticker: str) -> bool:
     return "=X" in ticker
-
-
-def _pip_multiplier(ticker: str) -> float:
-    """JPYペアは1pip=0.01のため×100、その他（EURUSD等）は1pip=0.0001のため×10000。"""
-    return 100 if "JPY" in ticker else 10000
 
 
 def build_trades(
@@ -74,6 +70,7 @@ def build_trades(
 
             trades.append({
                 "signal_date": pending_entry["time"],
+                "exit_date": event["time"],
                 "signal_type": "GC",
                 "entry_price": pending_entry["price"],
                 "exit_price": event["price"],

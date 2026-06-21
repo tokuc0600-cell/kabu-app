@@ -15,6 +15,7 @@ from backtest.strategy import (
     PositionState,
     attach_indicators,
     detect_cross_at,
+    pip_multiplier,
     step_position,
 )
 
@@ -50,7 +51,7 @@ def _build_position(row: dict) -> Position:
     return Position(state=state, entry_price=entry_price)
 
 
-def _to_pct(value) -> float:
+def _to_pips(value) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -83,10 +84,12 @@ def compute_pair_update(ticker_code: str, row: dict) -> dict | None:
     cross = detect_cross_at(prev["ma_fast"], prev["ma_slow"], curr["ma_fast"], curr["ma_slow"])
 
     position = _build_position(row)
-    stop_loss_pct = _to_pct(row.get("損切り%"))
-    take_profit_pct = _to_pct(row.get("利確%"))
+    stop_loss_pips = _to_pips(row.get("損切りpips"))
+    take_profit_pips = _to_pips(row.get("利確pips"))
     new_position, event = step_position(
-        position, cross, current_price, curr["time"], stop_loss_pct, take_profit_pct
+        position, cross, current_price, curr["time"],
+        mode="pips", stop_loss_pips=stop_loss_pips, take_profit_pips=take_profit_pips,
+        pip_multiplier_value=pip_multiplier(ticker_code),
     )
 
     if event and event["action"] == "ENTRY":

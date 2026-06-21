@@ -66,6 +66,15 @@
 - **新規に必要なGitHub Secrets（リポジトリ設定で登録、ユーザー側作業）**: `GMAIL_ADDRESS`（送信元Gmailアドレス）、`GMAIL_APP_PASSWORD`（Gmail 2段階認証のアプリパスワード。通常のログインパスワードではない）、`NOTIFY_TO`（通知先メールアドレス）。既存の`GCP_SERVICE_ACCOUNT_JSON`はそのまま流用する。
 - 認証情報の安全確認：`credentials/`・`.streamlit/secrets.toml`は変更していない。Gmailのパスワード等はコードに一切書かず、すべて環境変数（GitHub Secrets）経由。`git diff`でも平文の秘密情報が混入していないことを確認済み。
 
+### 2.9 Phase 5: バックテスト詳細表示・FXチャート分析/バックテスト拡張（2026-06-21）
+
+- `backtest/detail_view.py`を新規作成。`get_detail_window()`（対象時刻の前後n本を行位置ベースで切り出す）と`build_trade_detail_figure()`（Plotly製、1x2サブプロットでエントリー窓/エグジット窓を表示）を実装。Streamlit非依存の純粋関数なので株・FX両方の画面から呼べる。アニメーション(matplotlib/Pillow)ではなくPlotlyのウィンドウ切り出しで実現した（既存チャート資産の再利用・対話性のため）。
+- `streamlit_dashboard/stock/app.py`のタブ3「バックテスト」に、トレード一覧の下へ「🔍 トレード詳細を表示」expanderを追加。トレードを選択すると、エントリー/エグジット周辺±1〜2本の拡大チャートが表示される。既存の全期間チャート・PF指標・トレード一覧表は無変更（追加のみ）。AppTest（`streamlit.testing.v1.AppTest`、ブラウザ無しでスクリプトを実行する公式テストAPI）で実銘柄（7203）のバックテスト実行→詳細表示選択まで例外なく動作することを確認済み。
+- `backtest/strategy.py`に`pip_multiplier(ticker)`（旧`engine._pip_multiplier`を移設）と`check_exit_by_pips()`（pipsベースのエグジット判定、株の`check_exit_by_pct()`とは並立）を追加。`should_exit()`/`step_position()`に`mode="pct"`（既定・株用）/`mode="pips"`（FX用）の切替引数を追加したが、デフォルト値により既存の株側呼び出し（`sync_kabu.py`等）は無改修で動作する。`uv run python -m backtest.engine --ticker USDJPY=X ...`で既存CLIの出力が変わらないことを確認済み。
+- **株は%、FXはpipsでエグジット判定を行う方針をCLAUDE.mdに明記した。** Sheets「FXウォッチリスト」のJ/K列は「損切り%」「利確%」から「損切りpips」「利確pips」へ意味を変更する提案（Option A：列の挿入なし、ヘッダー文言と値の意味のみ変更）をユーザーに提示し、承認・実施を依頼した。`sync_fx.py`は新ヘッダー名（`損切りpips`/`利確pips`）を読む実装に変更済みのため、**実際のSheets編集が完了するまでは損切り/利確が常に無効（0）として扱われる**（旧ヘッダー名のままだと値が読めず安全側に倒れる）。Sheets編集完了後に1ペアで動作確認すること。
+- `streamlit_dashboard/fx/app_fx.py`を単一画面からタブ構成（📋ウォッチリスト／📈チャート分析／🔬バックテスト）に再構成した。タブ1は既存内容のまま移動。タブ2はEMA/RSI/MACD参考表示・手動エントリー記録（L:M列書き込み）を株側と同等に追加。タブ3はEMAクロスバックテスト（`backtest/engine.build_trades()`を再利用、株側のように独自実装は複製していない）とトレード詳細表示（`detail_view`を再利用）を追加。時間足は日足/週足/1時間足に加え、新たに15分足/5分足/1分足を選択可能にした（`FX_INTERVAL_OPTIONS`、yfinanceの制約に合わせて選択可能な表示期間を制限）。AppTestで実通貨ペア（USDJPY=X）のバックテスト実行・詳細表示・チャート分析タブ入力まで例外なく動作することを確認済み。
+- なお、バックテストタブの損切り%/利確%入力は（株側の既存CLI挙動と同じく）`backtest/engine.build_trades()`の%ベース判定のまま。pipsモードは現時点ではSheets連携のライブポジション判定（`sync_fx.py`）にのみ適用しており、バックテスト画面のしきい値はpips化していない（将来的に統一する場合は別途検討）。
+
 ### 2.6 Phase 2.5: エントリー・エグジットロジック統合（2026-06-20）
 
 - `backtest/engine.py`は`build_trades()`を廃止し、`strategy.step_position()`で1本ずつポジション状態を遷移させる方式に変更した。CLIに`--stop-loss`/`--take-profit`オプションを追加（デフォルト0=無効、デフォルト動作は従来の「デッドクロスのみでイグジット」と同じ）。
