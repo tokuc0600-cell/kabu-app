@@ -18,8 +18,10 @@ note_workflow/
 ├── published/                 # note公開済みアーカイブ
 │   └── [slug].md
 └── assets/
-    └── headers/               # ヘッダー画像
-        └── [slug].png
+    ├── headers/               # ヘッダー画像
+    │   └── [slug].png
+    └── images/                # 記事本文用の画像ファイル
+        └── [slug]/            #   記事スラッグごとにディレクトリを切る
 ```
 
 ---
@@ -43,13 +45,65 @@ note_workflow/
 記事生成を依頼されたら、以下を**この順番で**実行する。
 
 ```
-1. prompts/note_agent.md を読み込む
-2. outlineモード or reviewモードで記事を生成
-3. drafts/[slug].md に保存
-4. generate_header.py を実行してヘッダー画像を生成・保存
-5. git add drafts/ assets/headers/
-6. git commit -m "add: draft [slug]"
+1. Google Drive上の該当ドキュメント（下書き素材）をAPI/MCP経由で読み込む（読み取りのみ、書き込みしない）
+2. prompts/note_agent.md を読み込む
+3. outlineモード or reviewモードで記事を生成
+4. 文体をです・ます調に統一する
+5. 記事構成を分析し、効果的な箇所に（画像挿入：[意図]）プレースホルダーを挿入する
+6. 表が必要な箇所は、本文に直接埋め込まず（画像挿入：[表タイトル] PNG画像化）に置き換える
+7. 誤字脱字・句読点をチェックする
+8. drafts/[slug].md に保存する
+9. generate_header.py を実行してヘッダー画像を生成・保存
+10. 本文中の画像プレースホルダーに対応する保存先として assets/images/[slug]/ を用意する（実際の画像作成はレオンさんが手動で行う）
+11. git add drafts/ assets/headers/ assets/images/
+12. git commit -m "add: draft [slug]"
 ```
+
+---
+
+## 執筆ルール
+
+### 文体
+
+- 文末は**です・ます調**で統一する
+- 一人称は「僕」、二人称は使わない（既存のペルソナ定義を踏襲）
+- 話し言葉に近い、平易な日本語を使う
+
+### 画像挿入の扱い
+
+- noteでは画像を挿入できるため、記事構成上、視覚的な区切りや理解補助として効果的な箇所を分析し、`（画像挿入：[挿入意図の説明]）` という形でプレースホルダーを本文中に挿入する
+- 画像そのものの生成・選定はこのフローでは行わない（手動で別途作成する）
+- これは記事生成時に**毎回必ず実行する固定ルール**とする
+
+### 画像ファイルの保存運用
+
+- Markdownファイル自体には画像は埋め込まれない。生成されるのは `（画像挿入：◯◯）` というプレースホルダーのみ
+- 完成した画像ファイル（PNG等）は `assets/images/[slug]/` に保存する（記事スラッグごとにディレクトリを切る。`assets/headers/` のヘッダー画像とは別管理）
+- 保存した画像はGit管理下に置き、履歴として残す
+- noteへの実際のアップロードは、note編集画面上で手動で行う（noteはMarkdown画像記法を解釈しないため、`.md`ファイル内の画像パス記述は機能しない）
+- このフローでの成果物は、(1) プレースホルダー入りの drafts/[slug].md と、(2) assets/images/[slug]/ に格納された画像ファイル群、の2点がセットになる
+
+### 表の扱い
+
+- noteの仕様上、Markdownの表をそのまま貼り付けると体裁が崩れるため、**本文中に表を直接埋め込まない**
+- 比較表など表形式の情報が必要な場合は、`（画像挿入：[表の内容を表すタイトル] PNG画像化）` というプレースホルダーに置き換える
+- これも記事生成時に**毎回必ず実行する固定ルール**とする
+
+### 下書き素材（Google Drive）の位置づけ
+
+- Google Docs / Google Sheets 上の内容は「ラフな下書き」であり、正式な成形・推敲はこのリポジトリの drafts/ 配下で行う
+- Google Drive側のファイルは読み取り専用で参照し、書き込み・編集は行わない
+- 今後の運用フローは「Google Driveのファイル読み込み → 修正・推敲 → drafts/ に保存」を基本とする
+
+### 誤字脱字・句読点チェック
+
+- drafts/ への保存前に、誤字脱字・句読点の最終チェックを行う
+
+### 禁止事項
+
+- Google Docs（下書き元ドキュメント）への書き込み・編集は行わない（読み取り専用アクセス）
+- note本文中にMarkdownの表をそのまま残さない（必ずPNG化プレースホルダーに置き換える）
+- 画像そのもの（実際の画像ファイル）の生成・選定はこのフローで行わない。プレースホルダーの提示までに留める
 
 ---
 
@@ -87,7 +141,7 @@ python note_workflow/assets/generate_header.py \
 
 ```bash
 # 下書き保存後のコミット
-git add note_workflow/drafts/ note_workflow/assets/headers/
+git add note_workflow/drafts/ note_workflow/assets/headers/ note_workflow/assets/images/
 git commit -m "add: draft [slug]"
 
 # 公開済みに移動後のコミット（Leonからの指示後に実行）
