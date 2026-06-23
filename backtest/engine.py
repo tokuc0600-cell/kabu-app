@@ -27,8 +27,14 @@ def to_engine_df(df_chart: pd.DataFrame) -> pd.DataFrame:
     """yfinance形式（Open/High/Low/Close/Volume・DatetimeIndex）を、
     build_trades()が期待する小文字OHLC列（time, open, high, low, close, volume）に変換する。
     株・FX両方のStreamlit画面から共通で呼べるユーティリティ。
+
+    yfinanceのバージョンによっては単一銘柄でも列がMultiIndex
+    （例: ("Open", "1332.T")）になることがあるため、最初に第1階層へ平坦化しておく。
     """
-    data = df_chart.reset_index()
+    data = df_chart.copy()
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+    data = data.reset_index()
     data = data.rename(columns={data.columns[0]: "time"})
     data.columns = [str(c).lower() for c in data.columns]
     return data[["time", "open", "high", "low", "close", "volume"]]
