@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>投資判断レポート {{ generated_at }}</title>
+<style>
+  body { font-family: "Hiragino Sans", "Meiryo", sans-serif; max-width: 900px; margin: 40px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 1.4rem; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  h2 { font-size: 1.1rem; margin-top: 32px; border-left: 4px solid #336; padding-left: 8px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+  th { background: #f0f0f0; }
+  .up { color: #c0392b; }
+  .down { color: #2980b9; }
+  .empty { color: #888; font-style: italic; }
+  .meta { color: #666; font-size: 0.85rem; }
+  a { color: #2563eb; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>投資判断レポート</h1>
+<p class="meta">生成日時: {{ generated_at }}</p>
+
+<h2>1. マーケット概況</h2>
+{% if market_overview %}
+<table>
+  <tr><th>指標</th><th>ティッカー</th><th>現在値</th><th>前日比</th></tr>
+  {% for item in market_overview %}
+  <tr>
+    <td>{{ item.name }}</td>
+    <td>{{ item.ticker }}</td>
+    {% if item.price is not none %}
+    <td>{{ item.price }}</td>
+    <td class="{{ 'up' if item.change_pct >= 0 else 'down' }}">{{ item.change_pct }}%</td>
+    {% else %}
+    <td colspan="2" class="empty">取得失敗</td>
+    {% endif %}
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">データなし</p>
+{% endif %}
+
+<h2>2. 海外IRニュース（Supabase）</h2>
+{% if supabase_news %}
+<table>
+  <tr><th>日付</th><th>タイトル</th><th>情報源</th></tr>
+  {% for item in supabase_news %}
+  <tr>
+    <td>{{ item.date }}</td>
+    <td><a href="{{ item.url }}" target="_blank">{{ item.title }}</a></td>
+    <td>{{ item.source }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">データなし</p>
+{% endif %}
+
+<h2>3. ニュース（スプレッドシート）</h2>
+{% if spreadsheet_news %}
+<table>
+  <tr><th>日付</th><th>タイトル</th><th>情報源</th></tr>
+  {% for item in spreadsheet_news %}
+  <tr>
+    <td>{{ item.date }}</td>
+    <td><a href="{{ item.url }}" target="_blank">{{ item.title }}</a></td>
+    <td>{{ item.source }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">データなし</p>
+{% endif %}
+
+<h2>4. FXポジション・損益サマリー</h2>
+{% if fx_positions %}
+  {% for csv in fx_positions %}
+  <p class="meta">{{ csv.filename }}</p>
+  <table>
+    <tr>{% for col in csv.columns %}<th>{{ col }}</th>{% endfor %}</tr>
+    {% for row in csv.rows %}
+    <tr>{% for col in csv.columns %}<td>{{ row[col] }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </table>
+  {% endfor %}
+{% else %}
+<p class="empty">データなし（investment-report/input/ に fx_*.csv を配置してください）</p>
+{% endif %}
+
+<h2>5. 保有ポジション・損益サマリー（SBI証券）</h2>
+{% if sbi_positions %}
+  {% for csv in sbi_positions %}
+  <p class="meta">{{ csv.filename }}</p>
+  <table>
+    <tr>{% for col in csv.columns %}<th>{{ col }}</th>{% endfor %}</tr>
+    {% for row in csv.rows %}
+    <tr>{% for col in csv.columns %}<td>{{ row[col] }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </table>
+  {% endfor %}
+{% else %}
+<p class="empty">データなし（investment-report/input/ に sbi_*.csv を配置してください）</p>
+{% endif %}
+
+</body>
+</html>

@@ -122,6 +122,8 @@ def load_chart_data(ticker_code: str, period: str, interval: str = "1d") -> pd.D
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+    # yfinanceは取引時間中・終値未確定の最新行をClose等NaNで返すことがあるため除外する
+    df = df.dropna(subset=["Close"])
     df["MA5"]  = df["Close"].rolling(window=5).mean()
     df["MA25"] = df["Close"].rolling(window=25).mean()
     df.index = pd.to_datetime(df.index)
@@ -153,21 +155,37 @@ with tab1:
             filtered = filtered[filtered["シグナル"] == selected_signal]
 
         st.write(f"該当銘柄: **{len(filtered)}** 件")
-        st.data_editor(
-            filtered,
+
+        # 一覧は「銘柄名・現在値・シグナル」のみに絞り、横に切れないようにする。
+        # 残りの項目は行を選択した時だけ下に詳細表示する。
+        compact_cols = [c for c in ["銘柄名", "現在値", "シグナル"] if c in filtered.columns]
+        filtered_display = filtered.reset_index(drop=True)
+        selection = st.dataframe(
+            filtered_display[compact_cols],
             use_container_width=True,
             hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="t1_watchlist_table",
             column_config={
-                "銘柄コード":   st.column_config.TextColumn("銘柄コード",   width="small"),
-                "銘柄名":       st.column_config.TextColumn("銘柄名",       width="medium"),
-                "業種":         st.column_config.TextColumn("業種",         width="medium"),
-                "現在値":       st.column_config.NumberColumn("現在値",      width="small"),
-                "25日移動平均": st.column_config.NumberColumn("25日移動平均",width="small"),
-                "25日乖離率":   st.column_config.TextColumn("25日乖離率",   width="small"),
-                "シグナル":     st.column_config.TextColumn("シグナル",     width="medium"),
-                "最終更新日時": st.column_config.TextColumn("最終更新日時（取得時刻）", width="medium"),
+                "銘柄名":   st.column_config.TextColumn("銘柄名",   width="medium"),
+                "現在値":   st.column_config.NumberColumn("現在値", width="small"),
+                "シグナル": st.column_config.TextColumn("シグナル", width="medium"),
             },
         )
+
+        selected_rows = selection.selection.rows if selection and selection.selection else []
+        if selected_rows:
+            detail_row = filtered_display.iloc[selected_rows[0]]
+            st.markdown("---")
+            st.subheader(f"🔎 詳細: {detail_row.get('銘柄名', '')}（{detail_row.get('銘柄コード', '')}）")
+            d1, d2, d3 = st.columns(3)
+            d1.metric("業種", detail_row.get("業種", "—"))
+            d1.metric("25日移動平均", detail_row.get("25日移動平均", "—"))
+            d2.metric("25日乖離率", detail_row.get("25日乖離率", "—"))
+            d2.metric("ポジション状態", detail_row.get("ポジション状態", "—"))
+            d3.metric("建値", detail_row.get("建値", "—") or "—")
+            d3.metric("最終更新日時", detail_row.get("最終更新日時", "—"))
 
         # 遠隔更新ボタン
         st.markdown("---")

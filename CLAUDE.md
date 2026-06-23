@@ -196,6 +196,7 @@ uv run python scripts/check_exit_signals.py --mode intraday
 | PF計算・バックテスト開発 | `backtest/CLAUDE.md` |
 | Streamlit PF可視化UI | `streamlit_dashboard/pf_analysis/CLAUDE.md` |
 | note記事・Xポスト生成 | `note_workflow/CLAUDE.md` |
+| 投資判断用HTMLレポート生成 | `investment-report/CLAUDE.md` |
 
 ---
 

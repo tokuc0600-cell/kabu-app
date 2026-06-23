@@ -43,3 +43,7 @@ trades_output.csv
 
 # バックテストキャッシュ
 backtest/data/
+
+# investment-report（証券口座CSV・生成レポートはコミットしない）
+investment-report/input/
+investment-report/output/

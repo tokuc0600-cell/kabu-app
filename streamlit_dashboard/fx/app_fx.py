@@ -127,6 +127,8 @@ def load_fx_chart_data(ticker_code: str, period: str, interval: str = "1d") -> p
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+    # yfinanceは取引時間中・終値未確定の最新行をClose等NaNで返すことがあるため除外する
+    df = df.dropna(subset=["Close"])
     df.index = pd.to_datetime(df.index)
     return df
 
@@ -174,23 +176,36 @@ with tab1:
         # 件数の表示
         st.write(f"該当通貨ペア: **{len(filtered_df)}** 件")
 
-        # パソコン画面にスクロールなしで収まるよう、列ごとの横幅を微調整
-        st.data_editor(
-            filtered_df,
+        # 一覧は「通貨ペア名・現在値・シグナル」のみに絞り、横に切れないようにする。
+        # 残りの項目は行を選択した時だけ下に詳細表示する。
+        compact_cols = [c for c in ["通貨ペア名", "現在値", "シグナル"] if c in filtered_df.columns]
+        filtered_display = filtered_df.reset_index(drop=True)
+        fx_selection = st.dataframe(
+            filtered_display[compact_cols],
             use_container_width=True,
             hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="t1_fx_table",
             column_config={
                 "通貨ペア名": st.column_config.TextColumn("通貨ペア名", width="medium"),
-                "Yahooティッカー": st.column_config.TextColumn("Yahooティッカー", width="small"),
-                "現在値": st.column_config.NumberColumn("現在値", width="small"),
-                "20EMA": st.column_config.NumberColumn("20EMA", width="small"),
-                "200EMA": st.column_config.NumberColumn("200EMA", width="small"),
-                "20EMA乖離率": st.column_config.TextColumn("20EMA乖離率", width="small"),
-                "トレンド状態": st.column_config.TextColumn("トレンド状態", width="medium"),
-                "シグナル": st.column_config.TextColumn("シグナル", width="medium"),
-                "最終更新日時": st.column_config.TextColumn("最終更新日時", width="medium"),
+                "現在値":     st.column_config.NumberColumn("現在値",   width="small"),
+                "シグナル":   st.column_config.TextColumn("シグナル",   width="medium"),
             }
         )
+
+        fx_selected_rows = fx_selection.selection.rows if fx_selection and fx_selection.selection else []
+        if fx_selected_rows:
+            fx_detail = filtered_display.iloc[fx_selected_rows[0]]
+            st.markdown("---")
+            st.subheader(f"🔎 詳細: {fx_detail.get('通貨ペア名', '')}（{fx_detail.get('Yahooティッカー', '')}）")
+            f1, f2, f3 = st.columns(3)
+            f1.metric("20EMA", fx_detail.get("20EMA", "—"))
+            f1.metric("200EMA", fx_detail.get("200EMA", "—"))
+            f2.metric("20EMA乖離率", fx_detail.get("20EMA乖離率", "—"))
+            f2.metric("トレンド状態", fx_detail.get("トレンド状態", "—"))
+            f3.metric("ポジション状態", fx_detail.get("ポジション状態", "—"))
+            f3.metric("最終更新日時", fx_detail.get("最終更新日時", "—"))
 
         # --- スマホからPythonを遠隔起動するボタン ---
         st.markdown("---")
