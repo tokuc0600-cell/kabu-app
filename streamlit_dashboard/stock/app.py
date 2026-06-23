@@ -522,9 +522,12 @@ with tab3:
                     n_bars = st.number_input("前後の本数", min_value=1, max_value=2, value=2, step=1, key="t3_detail_nbars")
 
                 selected_trade = trade_records.iloc[trade_labels.index(selected_trade_label)].to_dict()
-                fig_detail = build_trade_detail_figure(
-                    data_bt, selected_trade,
-                    fast_col="ma_fast", slow_col="ma_slow",
-                    n_bars=n_bars,
-                )
-                st.plotly_chart(fig_detail, use_container_width=True)
+                try:
+                    fig_detail = build_trade_detail_figure(
+                        data_bt, selected_trade,
+                        fast_col="ma_fast", slow_col="ma_slow",
+                        n_bars=n_bars,
+                    )
+                    st.plotly_chart(fig_detail, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"トレード詳細の表示に失敗しました（再度「▶ バックテスト実行」を押すと直る場合があります）: {e}")

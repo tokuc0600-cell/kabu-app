@@ -65,6 +65,10 @@ def build_trade_detail_figure(
     entry_price = _first("エントリー値", "entry_price")
     exit_price = _first("イグジット値", "exit_price")
 
+    missing = {"open", "high", "low", "close"} - set(data.columns)
+    if missing:
+        raise ValueError(f"ローソク足の描画に必要な列が見つかりません: {sorted(missing)}（実際の列: {list(data.columns)}）")
+
     entry_window = get_detail_window(data, entry_time, n_bars)
     exit_window = get_detail_window(data, exit_time, n_bars)
 
