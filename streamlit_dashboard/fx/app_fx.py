@@ -529,7 +529,7 @@ with tab3:
                 selected_trade = trade_records.iloc[trade_labels.index(selected_trade_label)].to_dict()
                 fig_detail = build_trade_detail_figure(
                     data_bt, selected_trade,
-                    price_col="close", fast_col="ma_fast", slow_col="ma_slow",
+                    fast_col="ma_fast", slow_col="ma_slow",
                     n_bars=n_bars,
                 )
                 st.plotly_chart(fig_detail, use_container_width=True)

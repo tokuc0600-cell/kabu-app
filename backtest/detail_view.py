@@ -17,10 +17,10 @@ def get_detail_window(data: pd.DataFrame, point_time, n_bars: int = 2) -> pd.Dat
 
 
 def _add_window_trace(fig, window: pd.DataFrame, point_time, point_price, col: int,
-                       price_col: str, fast_col: str, slow_col: str, marker_color: str, marker_symbol: str) -> None:
-    fig.add_trace(go.Scatter(
-        x=window.index, y=window[price_col], mode="lines+markers", name=price_col,
-        line=dict(color="#fafafa", width=1), showlegend=False,
+                       fast_col: str, slow_col: str, marker_color: str, marker_symbol: str) -> None:
+    fig.add_trace(go.Candlestick(
+        x=window.index, open=window["open"], high=window["high"], low=window["low"], close=window["close"],
+        name="価格", increasing_line_color="#26a69a", decreasing_line_color="#ef5350", showlegend=False,
     ), row=1, col=col)
 
     if fast_col in window.columns:
@@ -44,14 +44,14 @@ def _add_window_trace(fig, window: pd.DataFrame, point_time, point_price, col: i
 def build_trade_detail_figure(
     data: pd.DataFrame,
     trade: dict,
-    price_col: str = "Close",
     fast_col: str = "ema_fast",
     slow_col: str = "ema_slow",
     n_bars: int = 2,
     theme: dict | None = None,
 ) -> go.Figure:
-    """1x2 subplot: 左=エントリー窓、右=エグジット窓。価格+fast/slow MA+対象点マーカー。
+    """1x2 subplot: 左=エントリー窓、右=エグジット窓。ローソク足+fast/slow MA+対象点マーカー。
 
+    data は open/high/low/close 列（小文字）を持つ前提（backtest/engine.py の to_engine_df() 形式）。
     Streamlit非依存（pd.DataFrame/dict/Figureのみ扱う）。株・FX両方の呼び出し元から使える。
     """
     def _first(*keys):
@@ -71,10 +71,10 @@ def build_trade_detail_figure(
     fig = make_subplots(rows=1, cols=2, subplot_titles=("エントリー周辺", "エグジット周辺"))
 
     _add_window_trace(fig, entry_window, entry_time, entry_price, col=1,
-                       price_col=price_col, fast_col=fast_col, slow_col=slow_col,
+                       fast_col=fast_col, slow_col=slow_col,
                        marker_color="#26a69a", marker_symbol="triangle-up")
     _add_window_trace(fig, exit_window, exit_time, exit_price, col=2,
-                       price_col=price_col, fast_col=fast_col, slow_col=slow_col,
+                       fast_col=fast_col, slow_col=slow_col,
                        marker_color="#ef5350", marker_symbol="triangle-down")
 
     theme = theme or {}
@@ -84,6 +84,8 @@ def build_trade_detail_figure(
         plot_bgcolor=theme.get("plot_bgcolor", "#0e1117"),
         font=dict(color=theme.get("font_color", "#fafafa")),
         margin=dict(l=10, r=10, t=40, b=10),
+        xaxis_rangeslider_visible=False,
+        xaxis2_rangeslider_visible=False,
     )
     fig.update_xaxes(gridcolor="#2d2d2d", showgrid=True)
     fig.update_yaxes(gridcolor="#2d2d2d", showgrid=True)
