@@ -468,6 +468,10 @@ with tab3:
             }
 
     result = st.session_state.get("t3_bt_result")
+    # デプロイで内部スキーマを変えても、古いセッションに残ったキャッシュをそのまま使ってしまわないように検証する
+    if result and not {"open", "high", "low", "close"}.issubset(result["data_bt"].columns):
+        st.session_state.pop("t3_bt_result", None)
+        result = None
     if result:
         trades_df  = result["trades_df"]
         summary    = result["summary"]
