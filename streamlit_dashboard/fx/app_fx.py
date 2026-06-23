@@ -436,12 +436,16 @@ with tab3:
 
     run_btn = st.button("▶ バックテスト実行", use_container_width=True, type="primary")
 
+    # st.button()はクリックした瞬間のスクリプト実行でのみTrueになるため、
+    # トレード詳細のセレクトボックス操作で再実行された際にも結果を表示し続けられるよう
+    # session_stateに結果を保持する（保持しないと再実行時に結果ごと消えてしまう）
     if run_btn and bt_ticker:
         with st.spinner(f"{bt_label} のデータでバックテスト中..."):
             df_bt_chart = load_fx_chart_data(bt_ticker, PERIOD_OPTIONS[bt_period])
 
         if df_bt_chart.empty:
             st.error("データを取得できませんでした。ティッカーを確認してください。")
+            st.session_state.pop("t3_bt_result", None)
         else:
             df_eng = to_engine_df(df_bt_chart)
             pm = pip_multiplier(bt_ticker)
@@ -458,59 +462,74 @@ with tab3:
             data_bt["ma_slow"] = data_bt["close"].ewm(span=slow_ema, adjust=False).mean()
             data_bt = data_bt.set_index("time")
 
-            if summary["total_trades"] > 0:
-                s1, s2, s3, s4 = st.columns(4)
-                s1.metric("取引回数", f"{summary['total_trades']} 回")
-                s2.metric("勝率", f"{summary['win_rate']} %")
-                s3.metric("プロフィットファクター", f"{summary['profit_factor']}")
-                s4.metric("最大ドローダウン", f"{summary['max_drawdown']} pips")
-            else:
-                st.warning("この期間・EMA設定ではトレードが発生しませんでした。")
+            st.session_state["t3_bt_result"] = {
+                "trades_df": trades_df, "summary": summary, "data_bt": data_bt,
+                "bt_label": bt_label, "fast_ema": fast_ema, "slow_ema": slow_ema, "bt_period": bt_period,
+            }
 
-            fig_bt = go.Figure()
-            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["close"], name="終値", line=dict(color="#fafafa", width=1)))
-            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_fast"], name=f"EMA{fast_ema}（短期）", line=dict(color="#ff9800", width=1.5)))
-            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_slow"], name=f"EMA{slow_ema}（長期）", line=dict(color="#2196f3", width=1.5)))
+    result = st.session_state.get("t3_bt_result")
+    if result:
+        trades_df  = result["trades_df"]
+        summary    = result["summary"]
+        data_bt    = result["data_bt"]
+        bt_label   = result["bt_label"]
+        fast_ema   = result["fast_ema"]
+        slow_ema   = result["slow_ema"]
+        bt_period  = result["bt_period"]
 
-            if not trades_df.empty:
-                fig_bt.add_trace(go.Scatter(x=trades_df["signal_date"], y=trades_df["entry_price"], mode="markers", name="エントリー（買い）", marker=dict(symbol="triangle-up", size=12, color="#26a69a")))
-                fig_bt.add_trace(go.Scatter(x=trades_df["exit_date"], y=trades_df["exit_price"], mode="markers", name="イグジット（売り）", marker=dict(symbol="triangle-down", size=12, color="#ef5350")))
+        if summary["total_trades"] > 0:
+            s1, s2, s3, s4 = st.columns(4)
+            s1.metric("取引回数", f"{summary['total_trades']} 回")
+            s2.metric("勝率", f"{summary['win_rate']} %")
+            s3.metric("プロフィットファクター", f"{summary['profit_factor']}")
+            s4.metric("最大ドローダウン", f"{summary['max_drawdown']} pips")
+        else:
+            st.warning("この期間・EMA設定ではトレードが発生しませんでした。")
 
-            fig_bt.update_layout(
-                title=f"{bt_label} EMA{fast_ema}/EMA{slow_ema} バックテスト（{bt_period}）",
-                height=450, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117", font=dict(color="#fafafa"),
-                legend=dict(orientation="h", y=1.02, x=0), margin=dict(l=10, r=10, t=60, b=10),
-                xaxis=dict(gridcolor="#2d2d2d"), yaxis=dict(gridcolor="#2d2d2d"),
+        fig_bt = go.Figure()
+        fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["close"], name="終値", line=dict(color="#fafafa", width=1)))
+        fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_fast"], name=f"EMA{fast_ema}（短期）", line=dict(color="#ff9800", width=1.5)))
+        fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_slow"], name=f"EMA{slow_ema}（長期）", line=dict(color="#2196f3", width=1.5)))
+
+        if not trades_df.empty:
+            fig_bt.add_trace(go.Scatter(x=trades_df["signal_date"], y=trades_df["entry_price"], mode="markers", name="エントリー（買い）", marker=dict(symbol="triangle-up", size=12, color="#26a69a")))
+            fig_bt.add_trace(go.Scatter(x=trades_df["exit_date"], y=trades_df["exit_price"], mode="markers", name="イグジット（売り）", marker=dict(symbol="triangle-down", size=12, color="#ef5350")))
+
+        fig_bt.update_layout(
+            title=f"{bt_label} EMA{fast_ema}/EMA{slow_ema} バックテスト（{bt_period}）",
+            height=450, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117", font=dict(color="#fafafa"),
+            legend=dict(orientation="h", y=1.02, x=0), margin=dict(l=10, r=10, t=60, b=10),
+            xaxis=dict(gridcolor="#2d2d2d"), yaxis=dict(gridcolor="#2d2d2d"),
+        )
+        st.plotly_chart(fig_bt, use_container_width=True)
+
+        if not trades_df.empty:
+            st.subheader("📄 トレード一覧")
+            st.dataframe(
+                trades_df.style.map(
+                    lambda v: "color: #26a69a" if isinstance(v, float) and v > 0 else ("color: #ef5350" if isinstance(v, float) and v < 0 else ""),
+                    subset=["profit_loss"]
+                ),
+                use_container_width=True, hide_index=True,
             )
-            st.plotly_chart(fig_bt, use_container_width=True)
 
-            if not trades_df.empty:
-                st.subheader("📄 トレード一覧")
-                st.dataframe(
-                    trades_df.style.map(
-                        lambda v: "color: #26a69a" if isinstance(v, float) and v > 0 else ("color: #ef5350" if isinstance(v, float) and v < 0 else ""),
-                        subset=["profit_loss"]
-                    ),
-                    use_container_width=True, hide_index=True,
+            # ─── トレード詳細表示（エントリー/エグジット周辺の拡大表示） ───
+            with st.expander("🔍 トレード詳細を表示（エントリー/エグジット周辺）"):
+                trade_records = trades_df.reset_index(drop=True)
+                trade_labels = [
+                    f"#{i+1}: {row['signal_date']} → {row['exit_date']}"
+                    for i, row in trade_records.iterrows()
+                ]
+                col_dsel, col_dbars = st.columns([3, 1])
+                with col_dsel:
+                    selected_trade_label = st.selectbox("対象トレードを選択：", trade_labels, key="t3_detail_trade")
+                with col_dbars:
+                    n_bars = st.number_input("前後の本数", min_value=1, max_value=2, value=2, step=1, key="t3_detail_nbars")
+
+                selected_trade = trade_records.iloc[trade_labels.index(selected_trade_label)].to_dict()
+                fig_detail = build_trade_detail_figure(
+                    data_bt, selected_trade,
+                    price_col="close", fast_col="ma_fast", slow_col="ma_slow",
+                    n_bars=n_bars,
                 )
-
-                # ─── トレード詳細表示（エントリー/エグジット周辺の拡大表示） ───
-                with st.expander("🔍 トレード詳細を表示（エントリー/エグジット周辺）"):
-                    trade_records = trades_df.reset_index(drop=True)
-                    trade_labels = [
-                        f"#{i+1}: {row['signal_date']} → {row['exit_date']}"
-                        for i, row in trade_records.iterrows()
-                    ]
-                    col_dsel, col_dbars = st.columns([3, 1])
-                    with col_dsel:
-                        selected_trade_label = st.selectbox("対象トレードを選択：", trade_labels, key="t3_detail_trade")
-                    with col_dbars:
-                        n_bars = st.number_input("前後の本数", min_value=1, max_value=2, value=2, step=1, key="t3_detail_nbars")
-
-                    selected_trade = trade_records.iloc[trade_labels.index(selected_trade_label)].to_dict()
-                    fig_detail = build_trade_detail_figure(
-                        data_bt, selected_trade,
-                        price_col="close", fast_col="ma_fast", slow_col="ma_slow",
-                        n_bars=n_bars,
-                    )
-                    st.plotly_chart(fig_detail, use_container_width=True)
+                st.plotly_chart(fig_detail, use_container_width=True)
