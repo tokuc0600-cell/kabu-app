@@ -13,7 +13,9 @@ def get_detail_window(data: pd.DataFrame, point_time, n_bars: int = 2) -> pd.Dat
     idx = data.index.get_indexer([pd.Timestamp(point_time)], method="nearest")[0]
     start = max(0, idx - n_bars)
     end = min(len(data), idx + n_bars + 1)
-    return data.iloc[start:end]
+    # Copy-on-Writeの遅延ビューのまま列アクセスすると環境によって列解決が不安定になることがあるため、
+    # スライス直後に明示的にコピーして実体化させる
+    return data.iloc[start:end].copy()
 
 
 def _add_window_trace(fig, window: pd.DataFrame, point_time, point_price, col: int,
