@@ -180,6 +180,7 @@ with tab1:
         # 残りの項目は行を選択した時だけ下に詳細表示する。
         compact_cols = [c for c in ["通貨ペア名", "現在値", "シグナル"] if c in filtered_df.columns]
         filtered_display = filtered_df.reset_index(drop=True)
+        st.caption("👆 詳細を見るには、行の左端のチェックボックスをクリックしてください（通貨ペア名や数値部分のクリックでは選択されません）")
         fx_selection = st.dataframe(
             filtered_display[compact_cols],
             use_container_width=True,
