@@ -530,4 +530,6 @@ with tab3:
                     )
                     st.plotly_chart(fig_detail, use_container_width=True)
                 except Exception as e:
-                    st.warning(f"トレード詳細の表示に失敗しました（再度「▶ バックテスト実行」を押すと直る場合があります）: {e}")
+                    st.warning("トレード詳細の表示に失敗しました（再度「▶ バックテスト実行」を押すと直る場合があります）")
+                    st.caption(f"data_bt列: {list(data_bt.columns)}")
+                    st.exception(e)
