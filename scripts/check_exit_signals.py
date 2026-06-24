@@ -99,8 +99,12 @@ def build_email(position: dict, current_price: float, reason: str, mode: str) ->
 
 
 def send_email(msg: MIMEText) -> None:
+    addr = os.environ["GMAIL_ADDRESS"]
+    pwd = os.environ["GMAIL_APP_PASSWORD"]
+    print(f"[DEBUG] GMAIL_ADDRESS len={len(addr)} repr={addr!r}")
+    print(f"[DEBUG] GMAIL_APP_PASSWORD len={len(pwd)} head={pwd[:2]!r} tail={pwd[-2:]!r}")
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(os.environ["GMAIL_ADDRESS"], os.environ["GMAIL_APP_PASSWORD"])
+        server.login(addr, pwd)
         server.send_message(msg)
 
 
