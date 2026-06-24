@@ -413,7 +413,7 @@ with tab3:
             rci_long = st.number_input("RCI長期", min_value=10, max_value=200, value=RCI_PERIODS["long"], step=1, key="t3_rci_long")
         rci_periods = {"short": rci_short, "mid": rci_mid, "long": rci_long}
 
-    col_b1, col_b2, col_b3 = st.columns([2, 1, 1])
+    col_b1, col_b2 = st.columns([2, 1])
 
     with col_b1:
         if not df_watch.empty and "Yahooティッカー" in df_watch.columns:
@@ -438,7 +438,15 @@ with tab3:
             bt_label = bt_ticker
 
     with col_b2:
-        bt_period = st.selectbox("検証期間：", list(PERIOD_OPTIONS.keys()), index=8, key="t3_period")
+        bt_interval_label = st.selectbox("時間足：", list(FX_INTERVAL_OPTIONS.keys()), index=4, key="t3_interval")
+        bt_interval_value = FX_INTERVAL_OPTIONS[bt_interval_label]["interval"]
+        bt_available_periods = FX_INTERVAL_OPTIONS[bt_interval_label]["periods"]
+
+    col_b2b, col_b3 = st.columns([1, 1])
+    with col_b2b:
+        default_idx = bt_available_periods.index("1年") if "1年" in bt_available_periods else 0
+        bt_period = st.selectbox("検証期間：", bt_available_periods, index=default_idx, key="t3_period")
+        bt_period_value = PERIOD_OPTIONS[bt_period]
 
     with col_b3:
         ema_label_suffix = "（判定条件）" if strategy_choice == "EMAクロス" else "（乖離率の表示用）"
@@ -458,7 +466,7 @@ with tab3:
     # session_stateに結果を保持する（保持しないと再実行時に結果ごと消えてしまう）
     if run_btn and bt_ticker:
         with st.spinner(f"{bt_label} のデータでバックテスト中..."):
-            df_bt_chart = load_fx_chart_data(bt_ticker, PERIOD_OPTIONS[bt_period])
+            df_bt_chart = load_fx_chart_data(bt_ticker, bt_period_value, bt_interval_value)
 
         if df_bt_chart.empty:
             st.error("データを取得できませんでした。ティッカーを確認してください。")
@@ -486,6 +494,7 @@ with tab3:
             st.session_state["t3_bt_result"] = {
                 "trades_df": trades_df, "summary": summary, "data_bt": data_bt,
                 "bt_label": bt_label, "fast_ema": fast_ema, "slow_ema": slow_ema, "bt_period": bt_period,
+                "bt_interval_label": bt_interval_label,
                 "strategy_choice": strategy_choice,
             }
 
@@ -502,6 +511,7 @@ with tab3:
         fast_ema   = result["fast_ema"]
         slow_ema   = result["slow_ema"]
         bt_period  = result["bt_period"]
+        bt_interval_label_result = result.get("bt_interval_label", "日足")
         strategy_choice_result = result.get("strategy_choice", "EMAクロス")
         is_rci = strategy_choice_result == "RCI（3line）" and "rci_short" in data_bt.columns
 
@@ -520,13 +530,13 @@ with tab3:
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["rci_short"], name="RCI短期", line=dict(color="#26a69a", width=1.5)), row=2, col=1)
             fig_bt.add_hline(y=80, line=dict(color="#ef5350", width=1, dash="dot"), row=2, col=1)
             fig_bt.add_hline(y=-80, line=dict(color="#26a69a", width=1, dash="dot"), row=2, col=1)
-            title = f"{bt_label} RCI（3line）バックテスト（{bt_period}）"
+            title = f"{bt_label} RCI（3line）バックテスト（{bt_interval_label_result}・{bt_period}）"
         else:
             fig_bt = go.Figure()
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["close"], name="終値", line=dict(color="#fafafa", width=1)))
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_fast"], name=f"EMA{fast_ema}（短期）", line=dict(color="#ff9800", width=1.5)))
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_slow"], name=f"EMA{slow_ema}（長期）", line=dict(color="#2196f3", width=1.5)))
-            title = f"{bt_label} EMA{fast_ema}/EMA{slow_ema} バックテスト（{bt_period}）"
+            title = f"{bt_label} EMA{fast_ema}/EMA{slow_ema} バックテスト（{bt_interval_label_result}・{bt_period}）"
 
         if not trades_df.empty:
             entry_row = dict(row=1, col=1) if is_rci else {}
