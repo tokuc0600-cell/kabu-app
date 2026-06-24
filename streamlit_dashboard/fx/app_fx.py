@@ -176,9 +176,9 @@ with tab1:
         # 件数の表示
         st.write(f"該当通貨ペア: **{len(filtered_df)}** 件")
 
-        # 一覧は「通貨ペア名・現在値・シグナル」のみに絞り、横に切れないようにする。
-        # 残りの項目は行を選択した時だけ下に詳細表示する。
-        compact_cols = [c for c in ["通貨ペア名", "現在値", "シグナル"] if c in filtered_df.columns]
+        # 一覧は「通貨ペア名・現在値・シグナル・トレンド状態」のみに絞り、横に切れないようにする。
+        # EMA数値・乖離率などの指標値は、チャート分析・バックテストタブで確認する運用にする。
+        compact_cols = [c for c in ["通貨ペア名", "現在値", "シグナル", "トレンド状態"] if c in filtered_df.columns]
         filtered_display = filtered_df.reset_index(drop=True)
         st.caption("👆 詳細を見るには、行の左端のチェックボックスをクリックしてください（通貨ペア名や数値部分のクリックでは選択されません）")
         fx_selection = st.dataframe(
@@ -189,9 +189,10 @@ with tab1:
             selection_mode="single-row",
             key="t1_fx_table",
             column_config={
-                "通貨ペア名": st.column_config.TextColumn("通貨ペア名", width="medium"),
-                "現在値":     st.column_config.NumberColumn("現在値",   width="small"),
-                "シグナル":   st.column_config.TextColumn("シグナル",   width="medium"),
+                "通貨ペア名":   st.column_config.TextColumn("通貨ペア名", width="medium"),
+                "現在値":       st.column_config.NumberColumn("現在値",   width="small"),
+                "シグナル":     st.column_config.TextColumn("シグナル",   width="medium"),
+                "トレンド状態": st.column_config.TextColumn("トレンド状態", width="medium"),
             }
         )
 
@@ -200,13 +201,10 @@ with tab1:
             fx_detail = filtered_display.iloc[fx_selected_rows[0]]
             st.markdown("---")
             st.subheader(f"🔎 詳細: {fx_detail.get('通貨ペア名', '')}（{fx_detail.get('Yahooティッカー', '')}）")
-            f1, f2, f3 = st.columns(3)
-            f1.metric("20EMA", fx_detail.get("20EMA", "—"))
-            f1.metric("200EMA", fx_detail.get("200EMA", "—"))
-            f2.metric("20EMA乖離率", fx_detail.get("20EMA乖離率", "—"))
-            f2.metric("トレンド状態", fx_detail.get("トレンド状態", "—"))
-            f3.metric("ポジション状態", fx_detail.get("ポジション状態", "—"))
-            f3.metric("最終更新日時", fx_detail.get("最終更新日時", "—"))
+            f1, f2 = st.columns(2)
+            f1.metric("ポジション状態", fx_detail.get("ポジション状態", "—"))
+            f1.metric("建値", fx_detail.get("建値", "—"))
+            f2.metric("最終更新日時", fx_detail.get("最終更新日時", "—"))
 
         # --- スマホからPythonを遠隔起動するボタン ---
         st.markdown("---")
@@ -455,9 +453,9 @@ with tab3:
 
     col_b4, col_b5 = st.columns(2)
     with col_b4:
-        stop_loss_pct = st.number_input("損切りライン（%・任意、0=無効）", min_value=0.0, max_value=50.0, value=0.0, step=0.5, key="t3_sl")
+        stop_loss_pips = st.number_input("損切りライン（pips・任意、0=無効）", min_value=0.0, max_value=1000.0, value=0.0, step=1.0, key="t3_sl")
     with col_b5:
-        take_profit_pct = st.number_input("利確ライン（%・任意、0=無効）", min_value=0.0, max_value=100.0, value=0.0, step=0.5, key="t3_tp")
+        take_profit_pips = st.number_input("利確ライン（pips・任意、0=無効）", min_value=0.0, max_value=2000.0, value=0.0, step=1.0, key="t3_tp")
 
     run_btn = st.button("▶ バックテスト実行", use_container_width=True, type="primary")
 
@@ -477,9 +475,10 @@ with tab3:
             indicator = "rci" if strategy_choice == "RCI（3line）" else "ema"
             trades_df = build_trades(
                 df_eng, fast=fast_ema, slow=slow_ema,
-                stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
+                stop_loss_pct=0, take_profit_pct=0,
                 is_fx=True, pip_multiplier=pm, ma_type="ema",
                 indicator=indicator, rci_periods=rci_periods,
+                stop_loss_pips=stop_loss_pips, take_profit_pips=take_profit_pips,
             )
             summary = summarize(trades_df)
 
@@ -581,6 +580,7 @@ with tab3:
                         data_bt, selected_trade,
                         fast_col="ma_fast", slow_col="ma_slow",
                         n_bars=n_bars,
+                        rci_col="rci_short" if is_rci else None,
                     )
                     st.plotly_chart(fig_detail, use_container_width=True)
                 except Exception as e:

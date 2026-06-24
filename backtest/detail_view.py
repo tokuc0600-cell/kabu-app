@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 def get_detail_window(data: pd.DataFrame, point_time, n_bars: int = 2) -> pd.DataFrame:
@@ -33,12 +34,16 @@ def build_trade_detail_figure(
     slow_col: str = "ema_slow",
     n_bars: int = 5,
     theme: dict | None = None,
+    rci_col: str | None = None,
 ) -> go.Figure:
     """エントリーからエグジットまでの期間を1本の連続チャートで表示する。
 
     ローソク足+fast/slow MA+エントリー/エグジットのマーカーを同一チャート上に描画する。
     data は open/high/low/close 列（小文字）を持つ前提（backtest/engine.py の to_engine_df() 形式）。
     Streamlit非依存（pd.DataFrame/dict/Figureのみ扱う）。株・FX両方の呼び出し元から使える。
+
+    rci_colを指定すると、上段に価格チャート・下段にRCI（±80ライン付き）の2段サブプロットにする
+    （RCI戦略のトレードを拡大表示する際に判定根拠を確認できるようにするため）。
     """
     def _first(*keys):
         for key in keys:
@@ -57,24 +62,30 @@ def build_trade_detail_figure(
 
     window = get_trade_window(data, entry_time, exit_time, margin_bars=n_bars)
 
-    fig = go.Figure()
+    show_rci = rci_col is not None and rci_col in window.columns
+    if show_rci:
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
+        price_row = dict(row=1, col=1)
+    else:
+        fig = go.Figure()
+        price_row = {}
 
     fig.add_trace(go.Candlestick(
         x=window.index, open=window["open"], high=window["high"], low=window["low"], close=window["close"],
         name="価格", increasing_line_color="#26a69a", decreasing_line_color="#ef5350", showlegend=False,
-    ))
+    ), **price_row)
 
     if fast_col in window.columns:
         fig.add_trace(go.Scatter(
             x=window.index, y=window[fast_col], mode="lines", name=fast_col,
             line=dict(color="#ff9800", width=1.5), showlegend=False,
-        ))
+        ), **price_row)
 
     if slow_col in window.columns:
         fig.add_trace(go.Scatter(
             x=window.index, y=window[slow_col], mode="lines", name=slow_col,
             line=dict(color="#2196f3", width=1.5), showlegend=False,
-        ))
+        ), **price_row)
 
     fig.add_trace(go.Scatter(
         x=[pd.Timestamp(entry_time), pd.Timestamp(exit_time)], y=[entry_price, exit_price],
@@ -84,11 +95,19 @@ def build_trade_detail_figure(
         text=["Entry", "Exit"], textposition=["bottom center", "top center"],
         textfont=dict(color="#00e5ff", size=13),
         showlegend=False,
-    ))
+    ), **price_row)
+
+    if show_rci:
+        fig.add_trace(go.Scatter(
+            x=window.index, y=window[rci_col], mode="lines", name="RCI短期",
+            line=dict(color="#26a69a", width=1.5), showlegend=False,
+        ), row=2, col=1)
+        fig.add_hline(y=80, line=dict(color="#ef5350", width=1, dash="dot"), row=2, col=1)
+        fig.add_hline(y=-80, line=dict(color="#26a69a", width=1, dash="dot"), row=2, col=1)
 
     theme = theme or {}
     fig.update_layout(
-        height=theme.get("height", 400),
+        height=theme.get("height", 400) + (150 if show_rci else 0),
         paper_bgcolor=theme.get("paper_bgcolor", "#0e1117"),
         plot_bgcolor=theme.get("plot_bgcolor", "#0e1117"),
         font=dict(color=theme.get("font_color", "#fafafa")),

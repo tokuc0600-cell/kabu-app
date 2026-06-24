@@ -16,6 +16,24 @@ from backtest.engine import build_trades, summarize, to_engine_df
 from backtest.detail_view import build_trade_detail_figure
 from sync_kabu import update_watchlist_with_signals
 
+
+def trend_from_kairi(kairi_value, strong_threshold: float = 3.0) -> str:
+    """25日乖離率からトレンドを4段階で表す（FXのトレンド状態と粒度を揃えるため）。
+
+    Sheetsの「25日乖離率」は文字列（例: "1.23%"）で保存されているため、ここで数値化する。
+    """
+    try:
+        kairi = float(str(kairi_value).rstrip("%"))
+    except (TypeError, ValueError):
+        return "—"
+    if kairi >= strong_threshold:
+        return "強い上昇"
+    if kairi >= 0:
+        return "やや上昇"
+    if kairi > -strong_threshold:
+        return "やや下降"
+    return "強い下降"
+
 # ─────────────────────────────────────────
 # ページ設定
 # ─────────────────────────────────────────
@@ -156,9 +174,11 @@ with tab1:
 
         st.write(f"該当銘柄: **{len(filtered)}** 件")
 
-        # 一覧は「銘柄名・現在値・シグナル」のみに絞り、横に切れないようにする。
-        # 残りの項目は行を選択した時だけ下に詳細表示する。
-        compact_cols = [c for c in ["銘柄名", "現在値", "シグナル"] if c in filtered.columns]
+        # 一覧は「銘柄名・現在値・シグナル・トレンド」のみに絞り、横に切れないようにする。
+        # 25日移動平均・乖離率などの指標値は、チャート分析・バックテストタブで確認する運用にする。
+        filtered = filtered.copy()
+        filtered["トレンド"] = filtered.get("25日乖離率", pd.Series(dtype=object)).map(trend_from_kairi)
+        compact_cols = [c for c in ["銘柄名", "現在値", "シグナル", "トレンド"] if c in filtered.columns]
         filtered_display = filtered.reset_index(drop=True)
         st.caption("👆 詳細を見るには、行の左端のチェックボックスをクリックしてください（銘柄名や数値部分のクリックでは選択されません）")
         selection = st.dataframe(
@@ -172,6 +192,7 @@ with tab1:
                 "銘柄名":   st.column_config.TextColumn("銘柄名",   width="medium"),
                 "現在値":   st.column_config.NumberColumn("現在値", width="small"),
                 "シグナル": st.column_config.TextColumn("シグナル", width="medium"),
+                "トレンド": st.column_config.TextColumn("トレンド", width="medium"),
             },
         )
 
@@ -182,10 +203,8 @@ with tab1:
             st.subheader(f"🔎 詳細: {detail_row.get('銘柄名', '')}（{detail_row.get('銘柄コード', '')}）")
             d1, d2, d3 = st.columns(3)
             d1.metric("業種", detail_row.get("業種", "—"))
-            d1.metric("25日移動平均", detail_row.get("25日移動平均", "—"))
-            d2.metric("25日乖離率", detail_row.get("25日乖離率", "—"))
             d2.metric("ポジション状態", detail_row.get("ポジション状態", "—"))
-            d3.metric("建値", detail_row.get("建値", "—") or "—")
+            d2.metric("建値", detail_row.get("建値", "—") or "—")
             d3.metric("最終更新日時", detail_row.get("最終更新日時", "—"))
 
         # 遠隔更新ボタン
@@ -561,6 +580,7 @@ with tab3:
                         data_bt, selected_trade,
                         fast_col="ma_fast", slow_col="ma_slow",
                         n_bars=n_bars,
+                        rci_col="rci_short" if is_rci else None,
                     )
                     st.plotly_chart(fig_detail, use_container_width=True)
                 except Exception as e:

@@ -61,6 +61,8 @@ def build_trades(
     ma_type: str = "ema",
     indicator: str = "ema",
     rci_periods: dict | None = None,
+    stop_loss_pips: float = 0,
+    take_profit_pips: float = 0,
 ) -> pd.DataFrame:
     """strategy.step_position()で1本ずつポジション状態を遷移させてトレードを構築する。
 
@@ -73,6 +75,10 @@ def build_trades(
 
     どちらのindicatorでも、表示用にfast/slow EMAからの乖離率をトレードごとに付与する
     （RCI戦略の結果確認用。判定条件には使わない）。
+
+    is_fx=Trueの場合、損切り・利確の判定はstop_loss_pips/take_profit_pips（pips基準）を使う
+    （strategy.step_positionのmode="pips"）。is_fx=False（株）はstop_loss_pct/take_profit_pct
+    （%基準、mode="pct"）のまま変更しない。
     """
     data = attach_indicators(df, fast=fast, slow=slow, ma_type=ma_type)
 
@@ -91,14 +97,17 @@ def build_trades(
     for i in range(1, len(data)):
         current_price = data["close"].iloc[i]
         current_time = data["time"].iloc[i]
-        position, event = step_position(
-            position,
-            signal.iloc[i],
-            current_price,
-            current_time,
-            stop_loss_pct,
-            take_profit_pct,
-        )
+        if is_fx:
+            position, event = step_position(
+                position, signal.iloc[i], current_price, current_time,
+                mode="pips", stop_loss_pips=stop_loss_pips, take_profit_pips=take_profit_pips,
+                pip_multiplier_value=pip_multiplier,
+            )
+        else:
+            position, event = step_position(
+                position, signal.iloc[i], current_price, current_time,
+                stop_loss_pct, take_profit_pct,
+            )
         if event is None:
             continue
 
