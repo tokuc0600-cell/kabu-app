@@ -74,6 +74,19 @@
 - **GitHub Secretsの変更**：`GMAIL_ADDRESS`・`GMAIL_APP_PASSWORD`は不要になり削除可（残しておいても実害なし）。新たに**`RESEND_API_KEY`**（ResendダッシュボードのAPI Keysで発行）の登録が必要。`NOTIFY_TO`・`GCP_SERVICE_ACCOUNT_JSON`はそのまま流用。
 - ローカル実行（`uv run python scripts/check_exit_signals.py --mode intraday`）時、Google Sheets APIへの接続で`SSLError: CERTIFICATE_VERIFY_FAILED`が発生する場合があるが、これはローカルPC環境側（プロキシ等によるSSL検証の問題）に起因するものでGitHub Actions上では発生しない。動作確認は基本的にGitHub Actions側のworkflow_dispatch手動実行で行う。
 
+### 2.8.2 ウォッチリストUI統一・FXバックテストpips化・RCIトレード詳細パネル（2026-06-24）
+
+- **背景**：FXのウォッチリストを株側に合わせて整理する過程で、FXバックテスト（タブ3）の損切/利確が「%入力」になっており、USDJPYのようなJPYペアでは1%が約150pips相当になってしまい、現実的な損切/利確設定ができていないことが判明した。一方、ライブ運用側（`sync_fx.py`の自動エグジット判定）は元々pips基準（Sheetsの「損切りpips」「利確pips」列）で正しく動いていたため、**バックテスト側だけが取り残されていた**。
+- **`backtest/engine.py` `build_trades()`** に`stop_loss_pips`/`take_profit_pips`引数を追加。`is_fx=True`の場合のみ`strategy.step_position()`を`mode="pips"`で呼ぶようにした。`is_fx=False`（株）は従来通り`mode="pct"`で無変更。
+- **FXダッシュボード（`app_fx.py`）バックテストタブ**：損切/利確の入力欄を「%」表記から「pips」表記に変更（例: 「損切りライン（pips・任意、0=無効）」）。株側の入力は%のまま変更なし。
+- **トレード詳細（ズーム）表示にRCIパネルを追加**：`backtest/detail_view.py build_trade_detail_figure()`に`rci_col`引数を追加し、RCI戦略のトレードを選んだ時は価格+EMA（上段）とRCI±80ライン（下段）の2段サブプロットで表示されるようにした（株・FX両方）。EMAクロス戦略のトレードでは従来通り単一チャート。
+- **ウォッチリスト一覧（タブ1）の列構成を統一**：従来の「名称・現在値・シグナル」3列に「トレンド」列を追加し4列に統一。
+  - FX：Sheetsの「トレンド状態」列（強い上昇/やや上昇/やや下降/強い下降）をそのまま表示列に追加。Sheetsスキーマの変更なし。
+  - 株：Sheetsスキーマは変更せず、`app.py`側で「25日乖離率」の数値から同じ4段階のトレンドラベルをクライアント側で計算して表示（`trend_from_kairi()`、閾値±3%で「強い」/「やや」を判定）。
+  - 行選択時の詳細表示からEMA数値・乖離率などの生の指標値を削除し、ポジション状態・建値・最終更新日時（株は業種も）のみに絞った。EMA・RCIなどの指標数値はチャート分析タブ・バックテストタブでのみ確認する運用にした。
+- **動作確認**：合成OHLCデータで`build_trades()`のFX pips判定（STOP_LOSS発火）・RCI戦略・株%判定（無変更）・`build_trade_detail_figure()`のRCIサブプロット生成をPythonスクリプトで直接検証済み。Streamlit画面上でのSheets実データを使った目視確認は未実施（次回ブラウザ確認推奨）。
+- **既知の問題（今回の変更とは無関係の既存バグ）**：`uv run python -m backtest.engine --help`が`ValueError: unsupported format character`で失敗する。`--stop-loss`/`--take-profit`のヘルプ文字列に含まれる`%`が原因（argparseの`%`書式展開と衝突）。今回の変更前から存在しており、`--help`以外の通常実行には影響しない。
+
 ### 2.9 Phase 5: バックテスト詳細表示・FXチャート分析/バックテスト拡張（2026-06-21）
 
 - `backtest/detail_view.py`を新規作成。`get_detail_window()`（対象時刻の前後n本を行位置ベースで切り出す）と`build_trade_detail_figure()`（Plotly製、1x2サブプロットでエントリー窓/エグジット窓を表示）を実装。Streamlit非依存の純粋関数なので株・FX両方の画面から呼べる。アニメーション(matplotlib/Pillow)ではなくPlotlyのウィンドウ切り出しで実現した（既存チャート資産の再利用・対話性のため）。
