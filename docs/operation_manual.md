@@ -61,10 +61,18 @@
 - `backtest/strategy.py`に通知専用のエグジット判定`check_exit_by_pct(entry_price, current_price)`と、その既定閾値の定数`STOP_LOSS_PCT=5.0`・`TAKE_PROFIT_PCT=10.0`を追加した。**これはSheetsの銘柄ごとの損切%・利確%とは別の、全銘柄一律の通知専用ルール。** 既存の`should_exit()`はこの関数に内部委譲する形にリファクタリングしたが、呼び出し元（`engine.py`/`sync_fx.py`/`sync_kabu.py`）は常に明示的に銘柄ごとの%を渡しているため、既存の挙動への影響はない（`uv run python -m backtest.engine --ticker USDJPY=X --timeframe 4h --fast 20 --slow 200 --stop-loss 2 --take-profit 5`で再検証し、レグレッション無しを確認済み）。
 - `streamlit_dashboard/stock/app.py`のタブ2「チャート分析」に、RSI(14)・MACD（ヒストグラム・MACD線・シグナル線）の参考表示を追加した（自動判定なし、表示専用）。
 - 同タブに「📥 ポジション操作」セクションを追加。選択銘柄がノーポジの場合のみ「エントリーを記録」ボタンが表示され、押すとSheetsのJ:K列（建値・ポジション状態）に直接書き込む。既存の自動エントリー（sync実行時のゴールデンクロス検知）とは独立した経路だが、書き込み先の列が同じため競合しない（手動エントリー後はポジション状態が「ロング中」になり、`should_enter`のノーポジ条件を満たさなくなるため自動エントリーは発火しない）。
-- `scripts/check_exit_signals.py`を新規作成。「ウォッチリスト」シートでロング中の銘柄を抽出し、yfinanceで現在値を取得、`check_exit_by_pct()`で損切/利確の固定%判定を行い、該当銘柄をGmail SMTP（`smtplib`、標準ライブラリのみで追加パッケージ無し）でメール通知する。Sheetsへの書き込み・重複通知防止は行わない（要件通り）。対象は株のみ。
+- `scripts/check_exit_signals.py`を新規作成。「ウォッチリスト」シートでロング中の銘柄を抽出し、yfinanceで現在値を取得、`check_exit_by_pct()`で損切/利確の固定%判定を行い、該当銘柄をメール通知する。Sheetsへの書き込み・重複通知防止は行わない（要件通り）。対象は株のみ。
 - `.github/workflows/check_exit_signals.yml`を新規作成。平日14:00 JST（5:00 UTC）・15:30 JST（6:30 UTC）の2回cron実行。`github.event.schedule`の値で当日中決済（intraday）／翌営業日決済（close）のメール文面を切り替える。
-- **新規に必要なGitHub Secrets（リポジトリ設定で登録、ユーザー側作業）**: `GMAIL_ADDRESS`（送信元Gmailアドレス）、`GMAIL_APP_PASSWORD`（Gmail 2段階認証のアプリパスワード。通常のログインパスワードではない）、`NOTIFY_TO`（通知先メールアドレス）。既存の`GCP_SERVICE_ACCOUNT_JSON`はそのまま流用する。
-- 認証情報の安全確認：`credentials/`・`.streamlit/secrets.toml`は変更していない。Gmailのパスワード等はコードに一切書かず、すべて環境変数（GitHub Secrets）経由。`git diff`でも平文の秘密情報が混入していないことを確認済み。
+- 認証情報の安全確認：`credentials/`・`.streamlit/secrets.toml`は変更していない。秘密情報はコードに一切書かず、すべて環境変数（GitHub Secrets）経由。`git diff`でも平文の秘密情報が混入していないことを確認済み。
+
+### 2.8.1 メール通知の送信方式変更：Gmail SMTP → Resend API（2026-06-24）
+
+- **背景**：GCPサービスアカウント鍵の漏洩対応（`.streamlit/secrets.toml`のGit追跡除外、鍵のローテーション）後、`check_exit_signals.py`がGitHub Actions上で`google.auth.exceptions.RefreshError: Invalid JWT Signature`で落ちるようになった。原因は鍵ローテーション後も`credentials/`配下のJSONファイルが古い鍵のままだったこと。新鍵に更新して解消。
+- その後、Gmail SMTP（`smtplib`）でのメール送信が`smtplib.SMTPAuthenticationError: (535, ... BadCredentials)`で失敗する別問題が発生。ローカル実行では同一のGmailアドレス・アプリパスワードでログイン成功するのに、GitHub Actions上では再現性をもって失敗することから、**GoogleがGitHub ActionsのIP（データセンターIP）からのSMTPログインを拒否している**と判断した。
+- 対処として、Gmail SMTP直接送信を廃止し、**Resend（https://resend.com）のメール送信APIを`requests`でHTTP呼び出しする方式に変更**した。`smtplib`・`email.mime.text.MIMEText`への依存を削除。
+- Resend無料プラン（送信元ドメイン未認証）の制約により、送信元は`onboarding@resend.dev`固定、**送信先（`NOTIFY_TO`）はResendアカウント登録時のメールアドレスのみ**に限定される。
+- **GitHub Secretsの変更**：`GMAIL_ADDRESS`・`GMAIL_APP_PASSWORD`は不要になり削除可（残しておいても実害なし）。新たに**`RESEND_API_KEY`**（ResendダッシュボードのAPI Keysで発行）の登録が必要。`NOTIFY_TO`・`GCP_SERVICE_ACCOUNT_JSON`はそのまま流用。
+- ローカル実行（`uv run python scripts/check_exit_signals.py --mode intraday`）時、Google Sheets APIへの接続で`SSLError: CERTIFICATE_VERIFY_FAILED`が発生する場合があるが、これはローカルPC環境側（プロキシ等によるSSL検証の問題）に起因するものでGitHub Actions上では発生しない。動作確認は基本的にGitHub Actions側のworkflow_dispatch手動実行で行う。
 
 ### 2.9 Phase 5: バックテスト詳細表示・FXチャート分析/バックテスト拡張（2026-06-21）
 
