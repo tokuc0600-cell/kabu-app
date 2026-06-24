@@ -8,12 +8,11 @@ Sheetsへの書き込み・重複通知防止は行わない。
 import argparse
 import json
 import os
-import smtplib
 import sys
-from email.mime.text import MIMEText
 from pathlib import Path
 
 import gspread
+import requests
 import yfinance as yf
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -78,7 +77,7 @@ def fetch_current_price(code: str) -> float | None:
     return float(hist["Close"].iloc[-1])
 
 
-def build_email(position: dict, current_price: float, reason: str, mode: str) -> MIMEText:
+def build_email(position: dict, current_price: float, reason: str, mode: str) -> dict:
     pnl_pct = (current_price - position["entry_price"]) / position["entry_price"] * 100
     reason_label = REASON_LABELS.get(reason, reason)
     subject = f"⚠️ {position['name']}（{position['code']}）が{reason_label}ラインに到達"
@@ -91,21 +90,22 @@ def build_email(position: dict, current_price: float, reason: str, mode: str) ->
         f"閾値: 損切{STOP_LOSS_PCT}% / 利確{TAKE_PROFIT_PCT}%\n\n"
         f"{MODE_MESSAGES[mode]}"
     )
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = os.environ["GMAIL_ADDRESS"]
-    msg["To"] = os.environ["NOTIFY_TO"]
-    return msg
+    return {
+        "from": "onboarding@resend.dev",
+        "to": [os.environ["NOTIFY_TO"]],
+        "subject": subject,
+        "text": body,
+    }
 
 
-def send_email(msg: MIMEText) -> None:
-    addr = os.environ["GMAIL_ADDRESS"]
-    pwd = os.environ["GMAIL_APP_PASSWORD"]
-    print(f"[DEBUG] GMAIL_ADDRESS len={len(addr)} repr={addr!r}")
-    print(f"[DEBUG] GMAIL_APP_PASSWORD len={len(pwd)} head={pwd[:2]!r} tail={pwd[-2:]!r}")
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(addr, pwd)
-        server.send_message(msg)
+def send_email(email_payload: dict) -> None:
+    response = requests.post(
+        "https://api.resend.com/emails",
+        headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}"},
+        json=email_payload,
+        timeout=10,
+    )
+    response.raise_for_status()
 
 
 def main() -> None:

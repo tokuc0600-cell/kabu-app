@@ -21,7 +21,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install gspread pandas yfinance google-auth google-auth-oauthlib
+        run: pip install gspread pandas yfinance google-auth google-auth-oauthlib requests
 
       - name: Determine notification mode
         id: mode
@@ -35,7 +35,6 @@ jobs:
       - name: Run exit signal check
         env:
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
         run: python scripts/check_exit_signals.py --mode ${{ steps.mode.outputs.mode }}
