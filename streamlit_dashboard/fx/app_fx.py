@@ -121,9 +121,11 @@ FX_INTERVAL_OPTIONS = {
 
 @st.cache_data(ttl=3600)
 def load_fx_chart_data(ticker_code: str, period: str, interval: str = "1d") -> pd.DataFrame:
+    # 取得失敗時はst.cache_dataにキャッシュさせないよう例外を投げる
+    # （空のDataFrameを返すと、Yahoo側の一時的な失敗が1時間キャッシュされ続けてしまう）
     df = yf.download(ticker_code, period=period, interval=interval, auto_adjust=True, progress=False)
     if df.empty:
-        return pd.DataFrame()
+        raise ValueError(f"データを取得できませんでした: {ticker_code} ({interval}, {period})")
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
@@ -277,7 +279,10 @@ with tab2:
 
     if selected_ticker:
         with st.spinner(f"{selected_label} のデータを取得中..."):
-            df_chart = load_fx_chart_data(selected_ticker, period_value, interval_value)
+            try:
+                df_chart = load_fx_chart_data(selected_ticker, period_value, interval_value)
+            except ValueError:
+                df_chart = pd.DataFrame()
 
         if df_chart.empty:
             st.error(f"「{selected_ticker}」のデータが取得できませんでした。ティッカーを確認してください。")
@@ -464,7 +469,10 @@ with tab3:
     # session_stateに結果を保持する（保持しないと再実行時に結果ごと消えてしまう）
     if run_btn and bt_ticker:
         with st.spinner(f"{bt_label} のデータでバックテスト中..."):
-            df_bt_chart = load_fx_chart_data(bt_ticker, bt_period_value, bt_interval_value)
+            try:
+                df_bt_chart = load_fx_chart_data(bt_ticker, bt_period_value, bt_interval_value)
+            except ValueError:
+                df_bt_chart = pd.DataFrame()
 
         if df_bt_chart.empty:
             st.error("データを取得できませんでした。ティッカーを確認してください。")
