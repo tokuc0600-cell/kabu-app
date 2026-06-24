@@ -230,6 +230,53 @@ def check_exit_by_pct(
     return None
 
 
+def check_exit_by_pct_intrabar(
+    entry_price: float,
+    bar_high: float,
+    bar_low: float,
+    stop_loss_pct: float = 0,
+    take_profit_pct: float = 0,
+) -> tuple[str | None, float | None]:
+    """1本のローソク足の高値・安値を使って、終値を待たずに損切り/利確ラインへの到達を判定する。
+
+    終値だけで判定すると、ローソク足の値幅が閾値より大きい時間足（FXの1時間足など）で
+    「設定した%より大きく損益が出る」結果になってしまう（実際の注文はラインに到達した時点で
+    約定するため）。約定価格は閾値の価格そのもの（ラインに到達した時点）とする。
+    同時に両方到達した場合は保守的に損切りを優先する。
+
+    戻り値: (reason, exit_price) または到達なしの場合 (None, None)。
+    """
+    if stop_loss_pct:
+        sl_price = entry_price * (1 - stop_loss_pct / 100)
+        if bar_low <= sl_price:
+            return "STOP_LOSS", sl_price
+    if take_profit_pct:
+        tp_price = entry_price * (1 + take_profit_pct / 100)
+        if bar_high >= tp_price:
+            return "TAKE_PROFIT", tp_price
+    return None, None
+
+
+def check_exit_by_pips_intrabar(
+    entry_price: float,
+    bar_high: float,
+    bar_low: float,
+    stop_loss_pips: float,
+    take_profit_pips: float,
+    pip_multiplier: float,
+) -> tuple[str | None, float | None]:
+    """check_exit_by_pct_intrabar()のpips版（FX用）。"""
+    if stop_loss_pips:
+        sl_price = entry_price - stop_loss_pips / pip_multiplier
+        if bar_low <= sl_price:
+            return "STOP_LOSS", sl_price
+    if take_profit_pips:
+        tp_price = entry_price + take_profit_pips / pip_multiplier
+        if bar_high >= tp_price:
+            return "TAKE_PROFIT", tp_price
+    return None, None
+
+
 def pip_multiplier(ticker: str) -> float:
     """JPYペアは1pip=0.01のため×100、その他（EURUSD等）は1pip=0.0001のため×10000。"""
     return 100 if "JPY" in ticker else 10000

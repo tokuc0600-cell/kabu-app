@@ -13,6 +13,8 @@ from backtest.strategy import (
     PositionState,
     attach_indicators,
     attach_rci,
+    check_exit_by_pct_intrabar,
+    check_exit_by_pips_intrabar,
     detect_cross_series,
     detect_rci_signal_series,
     pip_multiplier as _pip_multiplier,
@@ -97,17 +99,32 @@ def build_trades(
     for i in range(1, len(data)):
         current_price = data["close"].iloc[i]
         current_time = data["time"].iloc[i]
-        if is_fx:
-            position, event = step_position(
-                position, signal.iloc[i], current_price, current_time,
-                mode="pips", stop_loss_pips=stop_loss_pips, take_profit_pips=take_profit_pips,
-                pip_multiplier_value=pip_multiplier,
-            )
+        bar_high = data["high"].iloc[i]
+        bar_low = data["low"].iloc[i]
+
+        event = None
+        if position.state == PositionState.LONG:
+            # 損切り/利確は終値ではなく、その本の高値・安値で到達したかを先に判定する
+            # （終値だけで判定すると、値幅が閾値より大きい時間足で損益が閾値を超えて膨らむため）。
+            if is_fx:
+                reason, exit_price = check_exit_by_pips_intrabar(
+                    position.entry_price, bar_high, bar_low,
+                    stop_loss_pips, take_profit_pips, pip_multiplier,
+                )
+            else:
+                reason, exit_price = check_exit_by_pct_intrabar(
+                    position.entry_price, bar_high, bar_low,
+                    stop_loss_pct, take_profit_pct,
+                )
+            if reason:
+                event = {"action": "EXIT", "reason": reason, "price": exit_price, "time": current_time}
+                position = Position(state=PositionState.NONE, entry_price=None, entry_time=None)
+            else:
+                # 損切り/利確は上で判定済みなので、ここではデッドクロスのみを見る（0=無効を渡す）
+                position, event = step_position(position, signal.iloc[i], current_price, current_time, 0, 0)
         else:
-            position, event = step_position(
-                position, signal.iloc[i], current_price, current_time,
-                stop_loss_pct, take_profit_pct,
-            )
+            position, event = step_position(position, signal.iloc[i], current_price, current_time)
+
         if event is None:
             continue
 
