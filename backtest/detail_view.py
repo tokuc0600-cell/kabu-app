@@ -77,12 +77,13 @@ def build_trade_detail_figure(
         ))
 
     fig.add_trace(go.Scatter(
-        x=[pd.Timestamp(entry_time)], y=[entry_price], mode="markers", name="エントリー",
-        marker=dict(symbol="triangle-up", size=14, color="#26a69a"), showlegend=False,
-    ))
-    fig.add_trace(go.Scatter(
-        x=[pd.Timestamp(exit_time)], y=[exit_price], mode="markers", name="エグジット",
-        marker=dict(symbol="triangle-down", size=14, color="#ef5350"), showlegend=False,
+        x=[pd.Timestamp(entry_time), pd.Timestamp(exit_time)], y=[entry_price, exit_price],
+        mode="lines+markers+text", name="エントリー→エグジット",
+        line=dict(color="#00e5ff", width=1.5, dash="dash"),
+        marker=dict(symbol="circle", size=8, color="#00e5ff"),
+        text=["Entry", "Exit"], textposition=["bottom center", "top center"],
+        textfont=dict(color="#00e5ff", size=13),
+        showlegend=False,
     ))
 
     theme = theme or {}
