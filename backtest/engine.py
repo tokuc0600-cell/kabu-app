@@ -8,10 +8,13 @@ import pandas as pd
 
 from backtest.data_fetcher import fetch_ohlcv
 from backtest.strategy import (
+    RCI_PERIODS,
     Position,
     PositionState,
     attach_indicators,
+    attach_rci,
     detect_cross_series,
+    detect_rci_signal_series,
     pip_multiplier as _pip_multiplier,
     step_position,
 )
@@ -40,6 +43,13 @@ def to_engine_df(df_chart: pd.DataFrame) -> pd.DataFrame:
     return data[["time", "open", "high", "low", "close", "volume"]]
 
 
+def _kairi_pct(price: float, ema: float) -> float | None:
+    """価格のEMAからの乖離率（%）。EMA上ならプラス、下ならマイナス。"""
+    if ema is None or pd.isna(ema) or ema == 0:
+        return None
+    return round((price - ema) / ema * 100, 2)
+
+
 def build_trades(
     df: pd.DataFrame,
     fast: int,
@@ -49,14 +59,30 @@ def build_trades(
     is_fx: bool,
     pip_multiplier: float = 10000,
     ma_type: str = "ema",
+    indicator: str = "ema",
+    rci_periods: dict | None = None,
 ) -> pd.DataFrame:
     """strategy.step_position()で1本ずつポジション状態を遷移させてトレードを構築する。
 
-    エントリー：ゴールデンクロス（確定足）かつノーポジ。
-    エグジット：デッドクロス or 損切りライン or 利確ラインのいずれか（strategy.should_exit準拠）。
+    indicator="ema"（既定）：エントリー＝ゴールデンクロス（確定足）かつノーポジ、
+    エグジット＝デッドクロス or 損切りライン or 利確ラインのいずれか（strategy.should_exit準拠）。
+
+    indicator="rci"：エントリー＝短期RCIが売られすぎ圏から上向き反転、
+    エグジット＝短期RCIが買われすぎ圏から下向き反転 or 損切りライン or 利確ラインのいずれか
+    （strategy.detect_rci_signal_series準拠。RCIはEMAクロスとは独立したトリガーとして使う）。
+
+    どちらのindicatorでも、表示用にfast/slow EMAからの乖離率をトレードごとに付与する
+    （RCI戦略の結果確認用。判定条件には使わない）。
     """
     data = attach_indicators(df, fast=fast, slow=slow, ma_type=ma_type)
-    cross = detect_cross_series(data)
+
+    if indicator == "rci":
+        data = attach_rci(data, periods=rci_periods or RCI_PERIODS)
+        signal = detect_rci_signal_series(data)
+        signal_type_label = "RCI"
+    else:
+        signal = detect_cross_series(data)
+        signal_type_label = "GC"
 
     position = Position(state=PositionState.NONE)
     pending_entry = None
@@ -67,7 +93,7 @@ def build_trades(
         current_time = data["time"].iloc[i]
         position, event = step_position(
             position,
-            cross.iloc[i],
+            signal.iloc[i],
             current_price,
             current_time,
             stop_loss_pct,
@@ -84,17 +110,25 @@ def build_trades(
                 if is_fx
                 else (event["price"] - pending_entry["price"]) / pending_entry["price"] * 100
             )
+            entry_idx = pending_entry["idx"]
+            exit_reason = event["reason"]
+            if exit_reason == "DC" and indicator == "rci":
+                exit_reason = "RCI_EXIT"
 
             trades.append({
                 "signal_date": pending_entry["time"],
                 "exit_date": event["time"],
-                "signal_type": "GC",
+                "signal_type": signal_type_label,
                 "entry_price": pending_entry["price"],
                 "exit_price": event["price"],
                 "profit_loss": round(profit_loss, 4),
                 "result": "WIN" if profit_loss > 0 else "LOSS",
-                "hold_bars": i - pending_entry["idx"],
-                "exit_reason": event["reason"],
+                "hold_bars": i - entry_idx,
+                "exit_reason": exit_reason,
+                "entry_ema_fast_kairi_pct": _kairi_pct(pending_entry["price"], data["ma_fast"].iloc[entry_idx]),
+                "entry_ema_slow_kairi_pct": _kairi_pct(pending_entry["price"], data["ma_slow"].iloc[entry_idx]),
+                "exit_ema_fast_kairi_pct": _kairi_pct(event["price"], data["ma_fast"].iloc[i]),
+                "exit_ema_slow_kairi_pct": _kairi_pct(event["price"], data["ma_slow"].iloc[i]),
             })
             pending_entry = None
 

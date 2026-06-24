@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+import numpy as np
 import pandas as pd
 
 
@@ -85,6 +86,93 @@ def detect_cross_series(
     cross[golden] = CrossType.GOLDEN
     cross[dead] = CrossType.DEAD
     return cross
+
+
+RCI_PERIODS = {"short": 9, "mid": 26, "long": 52}
+RCI_OVERSOLD = -80.0
+RCI_OVERBOUGHT = 80.0
+
+
+def calc_rci(series: pd.Series, period: int) -> pd.Series:
+    """RCI（Rank Correlation Index・順位相関指数）。
+
+    直近period本について、日付順位（直近=1〜最古=period）と価格順位（最高値=1〜最安値=period）の
+    スピアマンの順位相関係数を-100〜+100で表す。
+        RCI = (1 - 6 * Σd_i^2 / (n^3 - n)) * 100  （d_i = 日付順位_i - 価格順位_i, n = period）
+    """
+    def _rci(window: np.ndarray) -> float:
+        n = len(window)
+        date_rank = np.arange(n, 0, -1)
+        price_rank = pd.Series(window).rank(ascending=False).to_numpy()
+        d_sq_sum = np.sum((date_rank - price_rank) ** 2)
+        return (1 - 6 * d_sq_sum / (n ** 3 - n)) * 100
+
+    return series.rolling(period).apply(_rci, raw=True)
+
+
+def attach_rci(
+    df: pd.DataFrame, periods: dict[str, int] | None = None, price_col: str = "close"
+) -> pd.DataFrame:
+    """df に rci_short / rci_mid / rci_long 列を追加して返す。"""
+    periods = periods or RCI_PERIODS
+    data = df.copy()
+    data["rci_short"] = calc_rci(data[price_col], periods["short"])
+    data["rci_mid"] = calc_rci(data[price_col], periods["mid"])
+    data["rci_long"] = calc_rci(data[price_col], periods["long"])
+    return data
+
+
+def detect_rci_signal_series(
+    df: pd.DataFrame,
+    short_col: str = "rci_short",
+    oversold: float = RCI_OVERSOLD,
+    overbought: float = RCI_OVERBOUGHT,
+) -> pd.Series:
+    """短期RCIの反転判定をCrossType形式で返す（既存のstep_position()をそのまま流用するため）。
+
+    GOLDEN：短期RCIが売られすぎ圏(oversold以下)から上向きに反転＝エントリー。
+    DEAD　：短期RCIが買われすぎ圏(overbought以上)から下向きに反転＝エグジット。
+    """
+    prev = df[short_col].shift(1)
+    curr = df[short_col]
+
+    entry = (prev <= oversold) & (curr > prev)
+    exit_ = (prev >= overbought) & (curr < prev)
+
+    signal = pd.Series(CrossType.NONE, index=df.index, dtype=object)
+    signal[entry] = CrossType.GOLDEN
+    signal[exit_] = CrossType.DEAD
+    return signal
+
+
+def rci_formula_text(
+    periods: dict[str, int] | None = None,
+    oversold: float = RCI_OVERSOLD,
+    overbought: float = RCI_OVERBOUGHT,
+) -> str:
+    """RCI（3line）の算出方法・判定ルールをUI表示用Markdownで返す。"""
+    periods = periods or RCI_PERIODS
+    return f"""
+**RCI（Rank Correlation Index・順位相関指数）**
+
+直近 n本について、「日付順位」（直近=1 〜 最古=n）と「価格順位」（最高値=1 〜 最安値=n）の
+スピアマンの順位相関係数を -100〜+100 で表した指標。
+
+```
+RCI = (1 - 6 * Σd_i^2 / (n^3 - n)) * 100
+d_i = 日付順位_i - 価格順位_i
+```
+
+- +100に近い：直近ほど高値が並ぶ＝強い上昇トレンド
+- -100に近い：直近ほど安値が並ぶ＝強い下落トレンド
+
+本ツールでは短期/中期/長期の3本（{periods['short']} / {periods['mid']} / {periods['long']}）を使用し、
+
+- 短期線が **{oversold:.0f}以下から上向きに反転 → エントリー**
+- 短期線が **{overbought:.0f}以上から下向きに反転 → エグジット**
+
+と判定する（中期・長期線はトレンド確認の補助表示で、判定には使わない）。
+"""
 
 
 class PositionState(Enum):

@@ -11,7 +11,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from backtest.strategy import calc_rsi, calc_macd
+from backtest.strategy import calc_rsi, calc_macd, calc_rci, RCI_PERIODS, rci_formula_text
 from backtest.engine import build_trades, summarize, to_engine_df
 from backtest.detail_view import build_trade_detail_figure
 from sync_kabu import update_watchlist_with_signals
@@ -387,7 +387,22 @@ with tab2:
 # タブ3：バックテスト
 # ═══════════════════════════════════════════
 with tab3:
-    st.subheader("🔬 EMAクロス バックテスト")
+    st.subheader("🔬 バックテスト")
+    strategy_choice = st.selectbox("戦略を選択：", ["EMAクロス", "RCI（3line）"], key="t3_strategy")
+
+    rci_periods = RCI_PERIODS
+    if strategy_choice == "RCI（3line）":
+        with st.expander("📐 RCI（3line）の算出方法・判定ルール"):
+            st.markdown(rci_formula_text(rci_periods))
+        col_r1, col_r2, col_r3 = st.columns(3)
+        with col_r1:
+            rci_short = st.number_input("RCI短期", min_value=2, max_value=50, value=RCI_PERIODS["short"], step=1, key="t3_rci_short")
+        with col_r2:
+            rci_mid = st.number_input("RCI中期", min_value=5, max_value=100, value=RCI_PERIODS["mid"], step=1, key="t3_rci_mid")
+        with col_r3:
+            rci_long = st.number_input("RCI長期", min_value=10, max_value=200, value=RCI_PERIODS["long"], step=1, key="t3_rci_long")
+        rci_periods = {"short": rci_short, "mid": rci_mid, "long": rci_long}
+
     col_b1, col_b2, col_b3 = st.columns([2, 1, 1])
 
     with col_b1:
@@ -416,8 +431,9 @@ with tab3:
         bt_period = st.selectbox("検証期間：", list(PERIOD_OPTIONS.keys()), index=8, key="t3_period")
 
     with col_b3:
-        fast_ema = st.number_input("短期EMA", min_value=2, max_value=50,  value=20, step=1)
-        slow_ema = st.number_input("長期EMA", min_value=10, max_value=500, value=75, step=5)
+        ema_label_suffix = "（判定条件）" if strategy_choice == "EMAクロス" else "（乖離率の表示用）"
+        fast_ema = st.number_input(f"短期EMA{ema_label_suffix}", min_value=2, max_value=50,  value=20, step=1)
+        slow_ema = st.number_input(f"長期EMA{ema_label_suffix}", min_value=10, max_value=500, value=75, step=5)
 
     col_b4, col_b5 = st.columns(2)
     with col_b4:
@@ -440,10 +456,12 @@ with tab3:
             st.session_state.pop("t3_bt_result", None)
         else:
             df_eng = to_engine_df(df_bt)
+            indicator = "rci" if strategy_choice == "RCI（3line）" else "ema"
             trades_df = build_trades(
                 df_eng, fast=fast_ema, slow=slow_ema,
                 stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
                 is_fx=False, ma_type="ema",
+                indicator=indicator, rci_periods=rci_periods,
             )
             summary = summarize(trades_df)
 
@@ -451,11 +469,14 @@ with tab3:
             data_bt = df_eng.copy()
             data_bt["ma_fast"] = data_bt["close"].ewm(span=fast_ema, adjust=False).mean()
             data_bt["ma_slow"] = data_bt["close"].ewm(span=slow_ema, adjust=False).mean()
+            if indicator == "rci":
+                data_bt["rci_short"] = calc_rci(data_bt["close"], rci_periods["short"])
             data_bt = data_bt.set_index("time")
 
             st.session_state["t3_bt_result"] = {
                 "trades_df": trades_df, "summary": summary, "data_bt": data_bt,
                 "bt_label": bt_label, "fast_ema": fast_ema, "slow_ema": slow_ema, "bt_period": bt_period,
+                "strategy_choice": strategy_choice,
             }
 
     result = st.session_state.get("t3_bt_result")
@@ -471,6 +492,8 @@ with tab3:
         fast_ema   = result["fast_ema"]
         slow_ema   = result["slow_ema"]
         bt_period  = result["bt_period"]
+        strategy_choice_result = result.get("strategy_choice", "EMAクロス")
+        is_rci = strategy_choice_result == "RCI（3line）" and "rci_short" in data_bt.columns
 
         if summary["total_trades"] > 0:
             s1, s2, s3, s4 = st.columns(4)
@@ -479,19 +502,29 @@ with tab3:
             s3.metric("プロフィットファクター", f"{summary['profit_factor']}")
             s4.metric("最大ドローダウン", f"{summary['max_drawdown']} %")
         else:
-            st.warning("この期間・EMA設定ではトレードが発生しませんでした。")
+            st.warning(f"この期間・{strategy_choice_result}設定ではトレードが発生しませんでした。")
 
-        fig_bt = go.Figure()
-        fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["close"], name="終値", line=dict(color="#fafafa", width=1)))
-        fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_fast"], name=f"EMA{fast_ema}（短期）", line=dict(color="#ff9800", width=1.5)))
-        fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_slow"], name=f"EMA{slow_ema}（長期）", line=dict(color="#2196f3", width=1.5)))
+        if is_rci:
+            fig_bt = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["close"], name="終値", line=dict(color="#fafafa", width=1)), row=1, col=1)
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["rci_short"], name="RCI短期", line=dict(color="#26a69a", width=1.5)), row=2, col=1)
+            fig_bt.add_hline(y=80, line=dict(color="#ef5350", width=1, dash="dot"), row=2, col=1)
+            fig_bt.add_hline(y=-80, line=dict(color="#26a69a", width=1, dash="dot"), row=2, col=1)
+            title = f"{bt_label} RCI（3line）バックテスト（{bt_period}）"
+        else:
+            fig_bt = go.Figure()
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["close"], name="終値", line=dict(color="#fafafa", width=1)))
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_fast"], name=f"EMA{fast_ema}（短期）", line=dict(color="#ff9800", width=1.5)))
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_slow"], name=f"EMA{slow_ema}（長期）", line=dict(color="#2196f3", width=1.5)))
+            title = f"{bt_label} EMA{fast_ema}/EMA{slow_ema} バックテスト（{bt_period}）"
 
         if not trades_df.empty:
-            fig_bt.add_trace(go.Scatter(x=trades_df["signal_date"], y=trades_df["entry_price"], mode="markers", name="エントリー（買い）", marker=dict(symbol="triangle-up", size=12, color="#26a69a")))
-            fig_bt.add_trace(go.Scatter(x=trades_df["exit_date"], y=trades_df["exit_price"], mode="markers", name="イグジット（売り）", marker=dict(symbol="triangle-down", size=12, color="#ef5350")))
+            entry_row = dict(row=1, col=1) if is_rci else {}
+            fig_bt.add_trace(go.Scatter(x=trades_df["signal_date"], y=trades_df["entry_price"], mode="markers", name="エントリー（買い）", marker=dict(symbol="triangle-up", size=12, color="#26a69a")), **entry_row)
+            fig_bt.add_trace(go.Scatter(x=trades_df["exit_date"], y=trades_df["exit_price"], mode="markers", name="イグジット（売り）", marker=dict(symbol="triangle-down", size=12, color="#ef5350")), **entry_row)
 
         fig_bt.update_layout(
-            title=f"{bt_label} EMA{fast_ema}/EMA{slow_ema} バックテスト（{bt_period}）",
+            title=title,
             height=450, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117", font=dict(color="#fafafa"),
             legend=dict(orientation="h", y=1.02, x=0), margin=dict(l=10, r=10, t=60, b=10),
             xaxis=dict(gridcolor="#2d2d2d"), yaxis=dict(gridcolor="#2d2d2d"),
@@ -500,6 +533,7 @@ with tab3:
 
         if not trades_df.empty:
             st.subheader("📄 トレード一覧")
+            st.caption("entry/exit_ema_*_kairi_pct：エントリー/エグジット時点の価格がEMAから何%離れていたか（EMA上＝プラス、EMA下＝マイナス）")
             st.dataframe(
                 trades_df.style.map(
                     lambda v: "color: #26a69a" if isinstance(v, float) and v > 0 else ("color: #ef5350" if isinstance(v, float) and v < 0 else ""),

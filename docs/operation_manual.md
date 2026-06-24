@@ -76,6 +76,13 @@
 - なお、バックテストタブの損切り%/利確%入力は`backtest/engine.build_trades()`の%ベース判定のまま。pipsモードは現時点ではSheets連携のライブポジション判定（`sync_fx.py`）にのみ適用しており、バックテスト画面のしきい値はpips化していない（将来的に統一する場合は別途検討）。
 - **2026-06-21追記: 株側バックテストタブにも損切り%/利確%の入力欄を追加した。** 当初、株側タブ3は`run_backtest()`という独自の簡易EMAクロス判定（ストップロス/利確なし）を使っていたため、「バックテストでパラメータを検証してからSheetsに入力する」という運用フローが株側では実行不可能だった。これを解消するため、株側も`run_backtest()`を廃止し、FX側と同じ`backtest/engine.build_trades()`/`summarize()`を呼ぶ実装に統一（`is_fx=False`なのでprofit_lossは%単位のまま）。`backtest/engine.py`に共通変換関数`to_engine_df()`を追加し、株・FX両方のapp.pyから同じ関数を呼ぶようにした（ロジックの二重実装を解消）。AppTestで任意銘柄（9984・ソフトバンクグループ）に対し損切り/利確%を3パターン（0%/0%、5%/10%、8%/16%）で実行し、例外なくPF・勝率・最大ドローダウンが変化することを確認済み。
 
+### 2.10 バックテストへのテクニカル指標選択機能の追加（RCI 3line、2026-06-24）
+
+- `backtest/strategy.py`に`calc_rci()`（RCI＝順位相関指数の算出。直近n本の日付順位と価格順位のスピアマン相関係数を-100〜+100で表す）、`attach_rci()`（rci_short/mid/long列を付与）、`detect_rci_signal_series()`（短期RCIが-80以下から上向き反転＝GOLDEN〈エントリー〉、+80以上から下向き反転＝DEAD〈エグジット〉と判定し、既存のCrossType形式で返す）、`rci_formula_text()`（UI表示用の算出方法Markdown）を追加した。RCIはEMAクロスとは独立した別戦略で、既存の`should_exit()`/`step_position()`をそのまま再利用するため、エグジット判定（RCI反転 or 損切りライン or 利確ラインのいずれかでクローズ）のロジックは二重実装していない。
+- `backtest/engine.py`の`build_trades()`に`indicator="ema"|"rci"`引数を追加（デフォルト`"ema"`で既存呼び出しは無改修で動作）。`indicator="rci"`時は`detect_rci_signal_series()`の結果を使い、`exit_reason`はEMAクロスの`"DC"`と区別できるよう`"RCI_EXIT"`に変換する。どちらのindicatorでもトレードごとに`entry_ema_fast_kairi_pct`/`entry_ema_slow_kairi_pct`/`exit_ema_fast_kairi_pct`/`exit_ema_slow_kairi_pct`（エントリー/エグジット価格のEMAからの乖離率。EMA上＝プラス、EMA下＝マイナス）を付与する表示専用カラムを追加した。
+- `streamlit_dashboard/stock/app.py`・`streamlit_dashboard/fx/app_fx.py`のタブ3「バックテスト」に「戦略を選択：」セレクトボックス（EMAクロス／RCI（3line））を追加。RCI選択時はexpanderで算出方法・判定ルールを表示し、RCI短期/中期/長期の期間入力（デフォルト9/26/52）が出る。EMA短期/長期の入力欄は、RCI選択時は「（乖離率の表示用）」というラベルに変わり、判定には使わずトレード結果の乖離率表示にのみ使うことを明示した。バックテスト結果チャートもRCI選択時は2段組（価格＋RCI短期線、±80に補助線）に切り替わる。
+- AppTest（実銘柄7203）で、EMAクロス・RCI（3line）の両戦略を切り替えてバックテスト実行→トレード一覧（新カラム含む）→トレード詳細表示まで例外なく動作することを確認済み。既存のCLI（`uv run python -m backtest.engine --ticker USDJPY=X ...`）の出力（indicator未指定＝EMAクロス）に変化が無いことも確認済み。
+
 ### 2.6 Phase 2.5: エントリー・エグジットロジック統合（2026-06-20）
 
 - `backtest/engine.py`は`build_trades()`を廃止し、`strategy.step_position()`で1本ずつポジション状態を遷移させる方式に変更した。CLIに`--stop-loss`/`--take-profit`オプションを追加（デフォルト0=無効、デフォルト動作は従来の「デッドクロスのみでイグジット」と同じ）。
