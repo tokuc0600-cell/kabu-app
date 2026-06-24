@@ -171,6 +171,7 @@ def summarize(trades: pd.DataFrame) -> dict:
             "avg_loss": 0.0,
             "risk_reward": 0.0,
             "max_drawdown": 0.0,
+            "net_profit": 0.0,
         }
 
     wins = trades.loc[trades["profit_loss"] > 0, "profit_loss"]
@@ -195,6 +196,7 @@ def summarize(trades: pd.DataFrame) -> dict:
         "avg_loss": round(avg_loss, 4),
         "risk_reward": round(avg_profit / avg_loss, 2) if avg_loss else float("inf"),
         "max_drawdown": round(max_drawdown, 4),
+        "net_profit": round(total_profit - total_loss, 4),
     }
 
 
@@ -257,6 +259,7 @@ def print_summary(ticker: str, timeframe: str, fast: int, slow: int, summary: di
     print(f"平均損失        : {summary['avg_loss']} {unit}")
     print(f"リスクリワード比: {summary['risk_reward']}")
     print(f"最大ドローダウン: {summary['max_drawdown']} {unit}")
+    print(f"純利益          : {summary['net_profit']} {unit}")
     print("=" * 40)
     print(f"結果保存: {detail_path}")
 

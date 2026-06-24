@@ -526,7 +526,7 @@ with tab3:
             s1, s2, s3, s4 = st.columns(4)
             s1.metric("取引回数", f"{summary['total_trades']} 回")
             s2.metric("勝率", f"{summary['win_rate']} %")
-            s3.metric("プロフィットファクター", f"{summary['profit_factor']}")
+            s3.metric("純利益", f"{summary['net_profit']:+.1f} pips")
             s4.metric("最大ドローダウン", f"{summary['max_drawdown']} pips")
         else:
             st.warning(f"この期間・{strategy_choice_result}設定ではトレードが発生しませんでした。")
