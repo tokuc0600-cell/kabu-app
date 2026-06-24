@@ -517,8 +517,8 @@ with tab3:
                 use_container_width=True, hide_index=True,
             )
 
-            # ─── トレード詳細表示（エントリー/エグジット周辺の拡大表示） ───
-            with st.expander("🔍 トレード詳細を表示（エントリー/エグジット周辺）"):
+            # ─── トレード詳細表示（エントリー～エグジット期間の拡大表示） ───
+            with st.expander("🔍 トレード詳細を表示（エントリー～エグジット期間）"):
                 trade_records = trades_df.reset_index(drop=True)
                 trade_labels = [
                     f"#{i+1}: {row['signal_date']} → {row['exit_date']}"
@@ -528,7 +528,7 @@ with tab3:
                 with col_dsel:
                     selected_trade_label = st.selectbox("対象トレードを選択：", trade_labels, key="t3_detail_trade")
                 with col_dbars:
-                    n_bars = st.number_input("前後の本数", min_value=1, max_value=2, value=2, step=1, key="t3_detail_nbars")
+                    n_bars = st.number_input("前後の余白本数", min_value=1, max_value=50, value=5, step=1, key="t3_detail_nbars")
 
                 selected_trade = trade_records.iloc[trade_labels.index(selected_trade_label)].to_dict()
                 try:
