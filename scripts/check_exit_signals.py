@@ -9,11 +9,13 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import gspread
 import requests
 import yfinance as yf
+from yfinance.exceptions import YFRateLimitError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -69,12 +71,19 @@ def fetch_open_positions() -> list[dict]:
     return positions
 
 
-def fetch_current_price(code: str) -> float | None:
+def fetch_current_price(code: str, retries: int = 3) -> float | None:
     ticker_code = f"{code}.T"
-    hist = yf.Ticker(ticker_code).history(period="5d")
-    if hist.empty:
-        return None
-    return float(hist["Close"].iloc[-1])
+    for attempt in range(retries):
+        try:
+            hist = yf.Ticker(ticker_code).history(period="5d")
+            if hist.empty:
+                return None
+            return float(hist["Close"].iloc[-1])
+        except YFRateLimitError:
+            if attempt == retries - 1:
+                raise
+            time.sleep(5 * (attempt + 1))
+    return None
 
 
 def build_email(position: dict, current_price: float, reason: str, mode: str) -> dict:
@@ -120,10 +129,15 @@ def main() -> None:
 
     notified = 0
     for position in positions:
-        current_price = fetch_current_price(position["code"])
+        try:
+            current_price = fetch_current_price(position["code"])
+        except YFRateLimitError:
+            print(f"[警告] {position['code']} はレート制限により取得できませんでした。スキップします。")
+            continue
         if current_price is None:
             print(f"[警告] {position['code']} の現在値が取得できませんでした。")
             continue
+        time.sleep(1.2)
 
         reason = check_exit_by_pct(position["entry_price"], current_price)
         if reason is None:
