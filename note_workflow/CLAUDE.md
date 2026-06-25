@@ -79,6 +79,25 @@ note_workflow/
 
 ※Supabase MCPサーバーは設定済み（2026-06-23、`claude mcp add` で `--scope user` 登録、read-only）。②のSupabase参照ステップは運用中。
 
+#### 記事案リストの自動生成（generate_proposals.py）
+
+②のテーマ候補提示を補助するため、Supabase（japan_ir / overseas_ir）から直近ニュースをテーマ
+（AI/投資/会計/金融/FX）でスコアリングして候補リストを出力するスクリプトを用意している。
+
+```bash
+uv run python note_workflow/generate_proposals.py
+# → note_workflow/drafts/proposals_YYYYMMDD.md を生成
+```
+
+## note記事案レビュー（Web Claude用）
+
+`proposals_YYYYMMDD.md` をWeb Claudeにアップロードして以下を貼る：
+
+> このproposalsファイルの各記事案にアイデアを補完して。
+> テーマはAI・投資・会計・金融・FX。
+> ノイズ（Form 8.x、小粒バイオ決算、生活系ニュース）は除外してよい。
+> 読者は投資初心者〜中級者の日本人。以上を考慮して再構成して。
+
 ### 開発トレース記事（note_agent.md使用）
 
 ```
@@ -224,7 +243,8 @@ python note_workflow/assets/generate_header.py \
 
 - **筆名**：レオン / Leon
 - **属性**：会社員 × 個人投資家（FX・日本株）
-- **テーマ**：AI × 英語 × 投資
+- **テーマ**：AI、会計、金融、投資（株式、FX）
+  - 海外のソース（GlobeNewswire等）も使うが、「英語情報だから価値がある」というニュアンスは強調しない
 - **開発中ツール**：kabu_app（Streamlit・Google Sheets・yfinance）
   - 現在の開発フォーカス：EMAクロスシグナルのプロフィットファクター（PF）分析エンジン
   - 「テクニカル分析に本当に優位性があるのか」を定量検証するのが目標
