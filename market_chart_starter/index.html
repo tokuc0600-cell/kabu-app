@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>4時間足チャート + EMA</title>
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 16px; background: #f7f7f7; }
+    h1 { margin-top: 0; font-size: 22px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+    .card { background: #fff; border-radius: 12px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    #chart { height: 600px; }
+    .hint { color: #555; font-size: 13px; line-height: 1.6; }
+    input[type="number"] { width: 80px; }
+    textarea { width: 100%; min-height: 120px; font-family: Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <h1>4時間足ローソク足 + EMA チャート</h1>
+
+  <div class="card toolbar">
+    <label>CSV読込: <input type="file" id="fileInput" accept=".csv" /></label>
+    <label>EMA期間: <input type="number" id="emaPeriod" value="20" min="1" /></label>
+    <button id="reloadBtn">再描画</button>
+  </div>
+
+  <div class="card" id="chart"></div>
+
+  <div class="card" style="margin-top:12px;">
+    <div><strong>CSV形式</strong></div>
+    <div class="hint">
+      ヘッダー例: time,open,high,low,close,volume<br>
+      time は ISO形式推奨（例: 2026-03-20T04:00:00Z）<br>
+      4時間足に整形したCSVを置けば、そのまま描画できます。
+    </div>
+    <textarea readonly>time,open,high,low,close,volume
+2026-03-20T00:00:00Z,100,105,98,103,1200
+2026-03-20T04:00:00Z,103,108,102,107,1500</textarea>
+  </div>
+
+  <script>
+    const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+      layout: { background: { color: '#ffffff' }, textColor: '#222' },
+      grid: { vertLines: { color: '#eee' }, horzLines: { color: '#eee' } },
+      rightPriceScale: { borderColor: '#ccc' },
+      timeScale: { borderColor: '#ccc', timeVisible: true, secondsVisible: false }
+    });
+
+    const candleSeries = chart.addCandlestickSeries();
+    const emaSeries = chart.addLineSeries({ lineWidth: 2 });
+
+    let loadedRows = [];
+
+    function parseCsv(text) {
+      const lines = text.trim().split(/\r?\n/);
+      const headers = lines[0].split(',').map(x => x.trim().toLowerCase());
+      const idx = Object.fromEntries(headers.map((h, i) => [h, i]));
+      const rows = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',').map(x => x.trim());
+        if (cols.length < 5) continue;
+        rows.push({
+          time: Math.floor(new Date(cols[idx.time]).getTime() / 1000),
+          open: Number(cols[idx.open]),
+          high: Number(cols[idx.high]),
+          low: Number(cols[idx.low]),
+          close: Number(cols[idx.close]),
+          volume: idx.volume !== undefined ? Number(cols[idx.volume]) : null
+        });
+      }
+      return rows.filter(r => Number.isFinite(r.time) && Number.isFinite(r.open));
+    }
+
+    function calcEMA(rows, period) {
+      if (!rows.length) return [];
+      const k = 2 / (period + 1);
+      let ema = rows[0].close;
+      const out = [{ time: rows[0].time, value: ema }];
+      for (let i = 1; i < rows.length; i++) {
+        ema = rows[i].close * k + ema * (1 - k);
+        out.push({ time: rows[i].time, value: Number(ema.toFixed(6)) });
+      }
+      return out;
+    }
+
+    function redraw() {
+      if (!loadedRows.length) return;
+      const period = Number(document.getElementById('emaPeriod').value || 20);
+      candleSeries.setData(loadedRows);
+      emaSeries.setData(calcEMA(loadedRows, period));
+      chart.timeScale().fitContent();
+    }
+
+    document.getElementById('reloadBtn').addEventListener('click', redraw);
+
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const text = await file.text();
+      loadedRows = parseCsv(text);
+      redraw();
+    });
+  </script>
+</body>
+</html>
