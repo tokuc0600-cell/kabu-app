@@ -156,6 +156,7 @@ def build_trades(
                 "signal_date": pending_entry["time"],
                 "exit_date": event["time"],
                 "signal_type": signal_type_label,
+                "direction": "ショート" if direction == "short" else "ロング",
                 "entry_price": pending_entry["price"],
                 "exit_price": event["price"],
                 "profit_loss": round(profit_loss, 4),
