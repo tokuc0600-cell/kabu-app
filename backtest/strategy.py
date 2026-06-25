@@ -38,6 +38,111 @@ def calc_macd(
     return macd_line, signal_line, histogram
 
 
+def calc_stochastic(
+    high: pd.Series, low: pd.Series, close: pd.Series,
+    k_period: int = 14, d_period: int = 3, smooth_k: int = 3,
+) -> tuple[pd.Series, pd.Series]:
+    """ストキャスティクス・スロー（表示専用の参考指標）。戻り値: (%K, %D)。"""
+    lowest_low = low.rolling(k_period).min()
+    highest_high = high.rolling(k_period).max()
+    raw_k = (close - lowest_low) / (highest_high - lowest_low) * 100
+    k = raw_k.rolling(smooth_k).mean()
+    d = k.rolling(d_period).mean()
+    return k, d
+
+
+def calc_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    """ATR（Average True Range、Wilder方式。表示専用の参考指標）。"""
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / period, adjust=False).mean()
+
+
+def calc_adx(
+    high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """ADX（+DI, -DI, ADX。Wilder方式。表示専用の参考指標）。戻り値: (plus_di, minus_di, adx)。"""
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+    minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+
+    atr = calc_atr(high, low, close, period)
+    plus_di = 100 * plus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr
+    minus_di = 100 * minus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr
+    dx = (plus_di - minus_di).abs() / (plus_di + minus_di) * 100
+    adx = dx.ewm(alpha=1 / period, adjust=False).mean()
+    return plus_di, minus_di, adx
+
+
+def calc_cci(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 20) -> pd.Series:
+    """CCI（Commodity Channel Index。表示専用の参考指標）。"""
+    typical_price = (high + low + close) / 3
+    sma = typical_price.rolling(period).mean()
+    mean_abs_dev = typical_price.rolling(period).apply(lambda x: (x - x.mean()).abs().mean(), raw=False)
+    return (typical_price - sma) / (0.015 * mean_abs_dev)
+
+
+def calc_williams_r(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    """Williams %R（表示専用の参考指標）。"""
+    highest_high = high.rolling(period).max()
+    lowest_low = low.rolling(period).min()
+    return (highest_high - close) / (highest_high - lowest_low) * -100
+
+
+def judge_indicator_signal(name: str, value, **params) -> str:
+    """指標名と現在値から投資判断の参考表示（「買い」/「中立」/「売り」）を返す。
+
+    investing.comの技術分析ページのような簡易サマリー表示用。あくまで参考表示であり、
+    strategy.pyのエントリー/エグジット判定（EMAクロス・RCI）には使わない。
+    """
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "—"
+
+    if name == "RSI":
+        if value > 70:
+            return "売り"
+        if value < 30:
+            return "買い"
+        return "中立"
+    if name == "Stochastic":
+        if value > 80:
+            return "売り"
+        if value < 20:
+            return "買い"
+        return "中立"
+    if name == "MACD":
+        return "買い" if value > 0 else "売り" if value < 0 else "中立"
+    if name == "ADX":
+        plus_di, minus_di, adx = value
+        if pd.isna(adx) or adx <= 25:
+            return "中立"
+        return "買い" if plus_di > minus_di else "売り"
+    if name == "CCI":
+        if value > 100:
+            return "売り"
+        if value < -100:
+            return "買い"
+        return "中立"
+    if name == "WilliamsR":
+        if value > -20:
+            return "売り"
+        if value < -80:
+            return "買い"
+        return "中立"
+    if name == "RCI":
+        if value >= RCI_OVERBOUGHT:
+            return "売り"
+        if value <= RCI_OVERSOLD:
+            return "買い"
+        return "中立"
+    return "—"
+
+
 def attach_indicators(
     df: pd.DataFrame,
     fast: int,
@@ -127,21 +232,30 @@ def detect_rci_signal_series(
     short_col: str = "rci_short",
     oversold: float = RCI_OVERSOLD,
     overbought: float = RCI_OVERBOUGHT,
+    *,
+    direction: str = "long",
 ) -> pd.Series:
     """短期RCIの反転判定をCrossType形式で返す（既存のstep_position()をそのまま流用するため）。
 
-    GOLDEN：短期RCIが売られすぎ圏(oversold以下)から上向きに反転＝エントリー。
-    DEAD　：短期RCIが買われすぎ圏(overbought以上)から下向きに反転＝エグジット。
+    direction="long"（デフォルト）：
+        GOLDEN：短期RCIが売られすぎ圏(oversold以下)から上向きに反転＝エントリー。
+        DEAD　：短期RCIが買われすぎ圏(overbought以上)から下向きに反転＝エグジット。
+    direction="short"：上記のエントリー/エグジット条件を入れ替える
+        （買われすぎ圏からの反落＝エントリー、売られすぎ圏からの反発＝エグジット）。
     """
     prev = df[short_col].shift(1)
     curr = df[short_col]
 
-    entry = (prev <= oversold) & (curr > prev)
-    exit_ = (prev >= overbought) & (curr < prev)
+    reversal_up = (prev <= oversold) & (curr > prev)
+    reversal_down = (prev >= overbought) & (curr < prev)
 
     signal = pd.Series(CrossType.NONE, index=df.index, dtype=object)
-    signal[entry] = CrossType.GOLDEN
-    signal[exit_] = CrossType.DEAD
+    if direction == "short":
+        signal[reversal_down] = CrossType.GOLDEN
+        signal[reversal_up] = CrossType.DEAD
+    else:
+        signal[reversal_up] = CrossType.GOLDEN
+        signal[reversal_down] = CrossType.DEAD
     return signal
 
 
@@ -178,6 +292,7 @@ d_i = 日付順位_i - 価格順位_i
 class PositionState(Enum):
     NONE = "none"
     LONG = "long"
+    SHORT = "short"
 
 
 @dataclass
@@ -200,9 +315,16 @@ class StrategyParams:
     take_profit_pips: float = 0
 
 
-def should_enter(position: Position, cross: CrossType) -> bool:
-    """エントリー条件：ノーポジ かつ ゴールデンクロス発生。"""
-    return position.state == PositionState.NONE and cross == CrossType.GOLDEN
+def should_enter(position: Position, cross: CrossType, *, direction: str = "long") -> bool:
+    """エントリー条件：ノーポジ かつ エントリー方向のクロス発生。
+
+    direction="long"（デフォルト）：ゴールデンクロスでエントリー。
+    direction="short"：デッドクロスでエントリー（株のショート対応用）。
+    """
+    if position.state != PositionState.NONE:
+        return False
+    entry_cross = CrossType.DEAD if direction == "short" else CrossType.GOLDEN
+    return cross == entry_cross
 
 
 # 通知（scripts/check_exit_signals.py）用の全銘柄一律エグジット閾値。
@@ -217,12 +339,22 @@ def check_exit_by_pct(
     current_price: float,
     stop_loss_pct: float = STOP_LOSS_PCT,
     take_profit_pct: float = TAKE_PROFIT_PCT,
+    *,
+    direction: str = "long",
 ) -> str | None:
     """保有開始価格からの%のみでエグジット判定（EMAクロスは見ない）。株専用。
 
+    direction="long"（デフォルト）：下落で損切り、上昇で利確。
+    direction="short"：上昇で損切り、下落で利確（不等号を反転）。
     戻り値: "STOP_LOSS" / "TAKE_PROFIT" / None。
     同時に複数条件が成立した場合は保守的に損切りを優先する。
     """
+    if direction == "short":
+        if stop_loss_pct and current_price >= entry_price * (1 + stop_loss_pct / 100):
+            return "STOP_LOSS"
+        if take_profit_pct and current_price <= entry_price * (1 - take_profit_pct / 100):
+            return "TAKE_PROFIT"
+        return None
     if stop_loss_pct and current_price <= entry_price * (1 - stop_loss_pct / 100):
         return "STOP_LOSS"
     if take_profit_pct and current_price >= entry_price * (1 + take_profit_pct / 100):
@@ -236,6 +368,8 @@ def check_exit_by_pct_intrabar(
     bar_low: float,
     stop_loss_pct: float = 0,
     take_profit_pct: float = 0,
+    *,
+    direction: str = "long",
 ) -> tuple[str | None, float | None]:
     """1本のローソク足の高値・安値を使って、終値を待たずに損切り/利確ラインへの到達を判定する。
 
@@ -244,8 +378,20 @@ def check_exit_by_pct_intrabar(
     約定するため）。約定価格は閾値の価格そのもの（ラインに到達した時点）とする。
     同時に両方到達した場合は保守的に損切りを優先する。
 
+    direction="long"（デフォルト）：下落で損切り、上昇で利確。
+    direction="short"：上昇で損切り、下落で利確（株のショート対応用）。
     戻り値: (reason, exit_price) または到達なしの場合 (None, None)。
     """
+    if direction == "short":
+        if stop_loss_pct:
+            sl_price = entry_price * (1 + stop_loss_pct / 100)
+            if bar_high >= sl_price:
+                return "STOP_LOSS", sl_price
+        if take_profit_pct:
+            tp_price = entry_price * (1 - take_profit_pct / 100)
+            if bar_low <= tp_price:
+                return "TAKE_PROFIT", tp_price
+        return None, None
     if stop_loss_pct:
         sl_price = entry_price * (1 - stop_loss_pct / 100)
         if bar_low <= sl_price:
@@ -313,13 +459,17 @@ def should_exit(
     stop_loss_pips: float = 0,
     take_profit_pips: float = 0,
     pip_multiplier_value: float = 10000,
+    direction: str = "long",
 ) -> tuple[bool, str | None]:
     """エグジット判定。戻り値: (exit_flag, exit_reason)。
 
     mode="pct"（デフォルト・株用）はstop_loss_pct/take_profit_pctを使用。
     mode="pips"（FX用）はstop_loss_pips/take_profit_pips/pip_multiplier_valueを使用。
+    direction="long"（デフォルト）はLONGポジション・デッドクロスでのエグジットを想定。
+    direction="short"はSHORTポジション・ゴールデンクロスでのエグジットを想定（株専用）。
     """
-    if position.state != PositionState.LONG or position.entry_price is None:
+    expected_state = PositionState.SHORT if direction == "short" else PositionState.LONG
+    if position.state != expected_state or position.entry_price is None:
         return False, None
 
     if mode == "pips":
@@ -327,10 +477,13 @@ def should_exit(
             position.entry_price, current_price, stop_loss_pips, take_profit_pips, pip_multiplier_value
         )
     else:
-        reason = check_exit_by_pct(position.entry_price, current_price, stop_loss_pct, take_profit_pct)
+        reason = check_exit_by_pct(
+            position.entry_price, current_price, stop_loss_pct, take_profit_pct, direction=direction
+        )
     if reason:
         return True, reason
-    if cross == CrossType.DEAD:
+    exit_cross = CrossType.GOLDEN if direction == "short" else CrossType.DEAD
+    if cross == exit_cross:
         return True, "DC"
     return False, None
 
@@ -347,26 +500,32 @@ def step_position(
     stop_loss_pips: float = 0,
     take_profit_pips: float = 0,
     pip_multiplier_value: float = 10000,
+    direction: str = "long",
 ) -> tuple[Position, dict | None]:
     """現在の状態と最新の確定足情報から、次のポジション状態を返す。
 
     mode="pct"（デフォルト・株用）/ "pips"（FX用）はshould_exit()に準拠。
+    direction="long"（デフォルト）/ "short"（株専用）はエントリー方向の切り替え。
     """
     if position.state == PositionState.NONE:
-        if should_enter(position, cross):
-            new_position = Position(
-                state=PositionState.LONG, entry_price=current_price, entry_time=current_time
-            )
-            return new_position, {"action": "ENTRY", "price": current_price, "time": current_time}
+        if should_enter(position, cross, direction=direction):
+            new_state = PositionState.SHORT if direction == "short" else PositionState.LONG
+            new_position = Position(state=new_state, entry_price=current_price, entry_time=current_time)
+            return new_position, {
+                "action": "ENTRY", "price": current_price, "time": current_time, "direction": direction,
+            }
         return position, None
 
     exit_flag, reason = should_exit(
         position, cross, current_price, stop_loss_pct, take_profit_pct,
         mode=mode, stop_loss_pips=stop_loss_pips, take_profit_pips=take_profit_pips,
-        pip_multiplier_value=pip_multiplier_value,
+        pip_multiplier_value=pip_multiplier_value, direction=direction,
     )
     if exit_flag:
-        pnl_pct = (current_price - position.entry_price) / position.entry_price * 100
+        if direction == "short":
+            pnl_pct = (position.entry_price - current_price) / position.entry_price * 100
+        else:
+            pnl_pct = (current_price - position.entry_price) / position.entry_price * 100
         new_position = Position(state=PositionState.NONE, entry_price=None, entry_time=None)
         return new_position, {
             "action": "EXIT",
@@ -374,6 +533,7 @@ def step_position(
             "price": current_price,
             "time": current_time,
             "pnl_pct": round(pnl_pct, 4),
+            "direction": direction,
         }
     return position, None
 

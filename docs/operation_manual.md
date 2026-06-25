@@ -127,6 +127,20 @@
 - **株側（`streamlit_dashboard/stock/app.py`）・CLI（`backtest/engine.py`のCLI出力）・PF分析ダッシュボード（`streamlit_dashboard/pf_analysis/`）は今回変更していない。** PF分析はプロジェクトの中核機能であり`profit_factor`フィールド自体は`summarize()`の戻り値に残したまま、FXバックテストタブの表示のみを変更した（フィールドを削除すると他画面が壊れるため）。
 - AppTestおよびStreamlit起動確認で例外が出ないこと、`summarize()`が`net_profit`を正しく返すこと（USDJPY=X・1時間足・損切20pips/利確40pipsで実値検証）を確認済み。
 
+### 2.13 株ダッシュボードのショート対応・新規テクニカル指標・選択式チャート指標（2026-06-25）
+
+- **背景**：株側のポジション管理（`PositionState`）が`NONE`/`LONG`の2値しかなく、ショート（空売り）戦略を試せなかった。ユーザーの要望（テクニカルサマリー表示の作り込み）の過程で発覚し、合わせて対応した。**FX側（`sync_fx.py`/`app_fx.py`）・通知スクリプト（`check_exit_signals.py`）は意図的に無変更**（株はほぼロング運用、FXのショートは将来対応）。
+- `backtest/strategy.py`：`PositionState.SHORT`を追加。`should_enter()`/`check_exit_by_pct()`/`check_exit_by_pct_intrabar()`/`should_exit()`/`step_position()`/`detect_rci_signal_series()`に`direction`キーワード引数（デフォルト`"long"`）を追加し、ショート時はエントリー/エグジットのクロス判定・損切利確の不等号・PnL計算をすべて反転させる。既存呼び出し元（FX・通知スクリプト・`backtest/engine.py`の既存呼び出し）は`direction`を渡さなければ今までと完全に同一の挙動。
+- `backtest/strategy.py`に新規テクニカル指標を追加：`calc_stochastic()`（ストキャスティクス・スロー）、`calc_atr()`（ATR、Wilder方式）、`calc_adx()`（+DI/-DI/ADX）、`calc_cci()`（CCI）、`calc_williams_r()`（Williams %R）。いずれも表示専用・判定には使わない。investing.com風の「買い/中立/売り」簡易判定を返す`judge_indicator_signal()`も追加（デフォルト閾値はdocstring参照）。
+- `backtest/engine.py` `build_trades()`に`direction`引数を追加。ポジション保有判定を`PositionState.LONG`固定から`held_state`（direction依存）に変更し、PnL計算もdirection別に分岐。`is_fx=True`の場合は常に`direction="long"`に強制し、FXのショートは未対応のまま。
+- `streamlit_dashboard/stock/sync_kabu.py`：Sheets「ウォッチリスト」の**M列「売買方向」**（値："ロング"/"ショート"、空欄は"ロング"扱いで後方互換）を読み、`step_position()`にdirectionを渡すようにした。**Sheets「ウォッチリスト」シートのM1セルに手動で「売買方向」という見出しを入力しておくこと**（既存銘柄はM列が空欄でよく、その場合は従来通りロング運用）。
+- `streamlit_dashboard/stock/app.py`：
+  - タブ1詳細表示に「売買方向」メトリクスと、investing.com風の「📊 テクニカルサマリー」テーブル（RSI/MACD/ストキャスティクス/ADX/CCI/Williams%R/RCI短期/ATRの現在値＋買い中立売り判定、買い/中立/売りの件数集計）を追加。
+  - タブ2「チャート分析」下部の指標表示をRSI・MACD固定からマルチセレクト（RSI/MACD/RCI/ストキャスティクス/ADX/CCI/Williams%R/ATR、デフォルトRSI・MACD）に変更。選択した指標だけ個別チャートとして表示される。
+  - タブ2「ポジション操作」に売買方向（ロング/ショート）のラジオボタンを追加。エントリー記録時にSheetsのJ:M列（建値・ポジション状態・最終更新日時・売買方向）を一括書き込みするように変更。
+  - タブ3「バックテスト」に売買方向（ロング/ショート）のラジオボタンを追加し、`build_trades(direction=...)`に渡す。結果チャートのタイトル・エントリー/イグジットのマーカー名・矢印方向もショート選択時は反転表示される。
+- **動作確認**：合成データでの単体検証（`step_position`のショートエントリー/エグジット時のPnL符号、`check_exit_by_pct`のショート時の損切/利確不等号反転、`build_trades`のショート方向トレード生成・WIN/LOSS判定）を実施し、ロング側の既存挙動に変化が無いことも確認済み。Streamlit画面上でのSheets実データを使った目視確認は未実施（次回ブラウザ確認推奨。手順は本ファイル末尾「4. 開発時の検証チェックリスト」参照）。
+
 ### 2.6 Phase 2.5: エントリー・エグジットロジック統合（2026-06-20）
 
 - `backtest/engine.py`は`build_trades()`を廃止し、`strategy.step_position()`で1本ずつポジション状態を遷移させる方式に変更した。CLIに`--stop-loss`/`--take-profit`オプションを追加（デフォルト0=無効、デフォルト動作は従来の「デッドクロスのみでイグジット」と同じ）。

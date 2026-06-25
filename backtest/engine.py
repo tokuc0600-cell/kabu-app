@@ -65,6 +65,7 @@ def build_trades(
     rci_periods: dict | None = None,
     stop_loss_pips: float = 0,
     take_profit_pips: float = 0,
+    direction: str = "long",
 ) -> pd.DataFrame:
     """strategy.step_position()で1本ずつポジション状態を遷移させてトレードを構築する。
 
@@ -81,12 +82,16 @@ def build_trades(
     is_fx=Trueの場合、損切り・利確の判定はstop_loss_pips/take_profit_pips（pips基準）を使う
     （strategy.step_positionのmode="pips"）。is_fx=False（株）はstop_loss_pct/take_profit_pct
     （%基準、mode="pct"）のまま変更しない。
+
+    direction="long"（デフォルト）/ "short"（株専用）：エントリー方向の切り替え。
+    ショートはFX側（is_fx=True）では未対応のため、is_fx=Trueの場合は常にlongとして扱う。
     """
     data = attach_indicators(df, fast=fast, slow=slow, ma_type=ma_type)
+    direction = "short" if (direction == "short" and not is_fx) else "long"
 
     if indicator == "rci":
         data = attach_rci(data, periods=rci_periods or RCI_PERIODS)
-        signal = detect_rci_signal_series(data)
+        signal = detect_rci_signal_series(data, direction=direction)
         signal_type_label = "RCI"
     else:
         signal = detect_cross_series(data)
@@ -95,6 +100,7 @@ def build_trades(
     position = Position(state=PositionState.NONE)
     pending_entry = None
     trades = []
+    held_state = PositionState.SHORT if direction == "short" else PositionState.LONG
 
     for i in range(1, len(data)):
         current_price = data["close"].iloc[i]
@@ -103,7 +109,7 @@ def build_trades(
         bar_low = data["low"].iloc[i]
 
         event = None
-        if position.state == PositionState.LONG:
+        if position.state == held_state:
             # 損切り/利確は終値ではなく、その本の高値・安値で到達したかを先に判定する
             # （終値だけで判定すると、値幅が閾値より大きい時間足で損益が閾値を超えて膨らむため）。
             if is_fx:
@@ -114,16 +120,20 @@ def build_trades(
             else:
                 reason, exit_price = check_exit_by_pct_intrabar(
                     position.entry_price, bar_high, bar_low,
-                    stop_loss_pct, take_profit_pct,
+                    stop_loss_pct, take_profit_pct, direction=direction,
                 )
             if reason:
                 event = {"action": "EXIT", "reason": reason, "price": exit_price, "time": current_time}
                 position = Position(state=PositionState.NONE, entry_price=None, entry_time=None)
             else:
-                # 損切り/利確は上で判定済みなので、ここではデッドクロスのみを見る（0=無効を渡す）
-                position, event = step_position(position, signal.iloc[i], current_price, current_time, 0, 0)
+                # 損切り/利確は上で判定済みなので、ここではクロスのみを見る（0=無効を渡す）
+                position, event = step_position(
+                    position, signal.iloc[i], current_price, current_time, 0, 0, direction=direction,
+                )
         else:
-            position, event = step_position(position, signal.iloc[i], current_price, current_time)
+            position, event = step_position(
+                position, signal.iloc[i], current_price, current_time, direction=direction,
+            )
 
         if event is None:
             continue
@@ -131,11 +141,12 @@ def build_trades(
         if event["action"] == "ENTRY":
             pending_entry = {**event, "idx": i}
         elif event["action"] == "EXIT" and pending_entry is not None:
-            profit_loss = (
-                (event["price"] - pending_entry["price"]) * pip_multiplier
-                if is_fx
-                else (event["price"] - pending_entry["price"]) / pending_entry["price"] * 100
-            )
+            if is_fx:
+                profit_loss = (event["price"] - pending_entry["price"]) * pip_multiplier
+            elif direction == "short":
+                profit_loss = (pending_entry["price"] - event["price"]) / pending_entry["price"] * 100
+            else:
+                profit_loss = (event["price"] - pending_entry["price"]) / pending_entry["price"] * 100
             entry_idx = pending_entry["idx"]
             exit_reason = event["reason"]
             if exit_reason == "DC" and indicator == "rci":
