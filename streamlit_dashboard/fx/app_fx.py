@@ -12,7 +12,10 @@ import json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from backtest.strategy import calc_rsi, calc_macd, calc_rci, pip_multiplier, RCI_PERIODS, rci_formula_text
+from backtest.strategy import (
+    calc_rsi, calc_macd, calc_rci, pip_multiplier, RCI_PERIODS, rci_formula_text,
+    calc_stochastic, calc_atr, calc_adx, calc_cci, calc_williams_r, judge_indicator_signal,
+)
 from backtest.engine import build_trades, summarize, to_engine_df
 from backtest.detail_view import build_trade_detail_figure
 from sync_fx import update_fx_watchlist_with_signals
@@ -136,6 +139,35 @@ def load_fx_chart_data(ticker_code: str, period: str, interval: str = "1d") -> p
     return df
 
 
+def build_technical_summary(df_chart: pd.DataFrame) -> pd.DataFrame:
+    """investing.com風のテクニカル指標サマリー（指標名・現在値・判定）を返す。表示専用、判定には使わない。"""
+    high, low, close = df_chart["High"], df_chart["Low"], df_chart["Close"]
+
+    rsi_now = calc_rsi(close).iloc[-1]
+    _, _, macd_hist = calc_macd(close)
+    macd_now = macd_hist.iloc[-1]
+    stoch_k, _ = calc_stochastic(high, low, close)
+    stoch_now = stoch_k.iloc[-1]
+    atr_now = calc_atr(high, low, close).iloc[-1]
+    plus_di, minus_di, adx = calc_adx(high, low, close)
+    adx_now = (plus_di.iloc[-1], minus_di.iloc[-1], adx.iloc[-1])
+    cci_now = calc_cci(high, low, close).iloc[-1]
+    willr_now = calc_williams_r(high, low, close).iloc[-1]
+    rci_now = calc_rci(close, RCI_PERIODS["short"]).iloc[-1]
+
+    rows = [
+        ("RSI(14)", f"{rsi_now:.1f}" if pd.notna(rsi_now) else "—", judge_indicator_signal("RSI", rsi_now)),
+        ("MACDヒストグラム", f"{macd_now:.5f}" if pd.notna(macd_now) else "—", judge_indicator_signal("MACD", macd_now)),
+        ("ストキャスティクス%K", f"{stoch_now:.1f}" if pd.notna(stoch_now) else "—", judge_indicator_signal("Stochastic", stoch_now)),
+        ("ADX", f"{adx_now[2]:.1f}" if pd.notna(adx_now[2]) else "—", judge_indicator_signal("ADX", adx_now)),
+        ("CCI(20)", f"{cci_now:.1f}" if pd.notna(cci_now) else "—", judge_indicator_signal("CCI", cci_now)),
+        ("Williams %R", f"{willr_now:.1f}" if pd.notna(willr_now) else "—", judge_indicator_signal("WilliamsR", willr_now)),
+        ("RCI短期", f"{rci_now:.1f}" if pd.notna(rci_now) else "—", judge_indicator_signal("RCI", rci_now)),
+        ("ATR(14)", f"{atr_now:.5f}" if pd.notna(atr_now) else "—", "—"),
+    ]
+    return pd.DataFrame(rows, columns=["指標", "現在値", "判定"])
+
+
 # ─── タブ ───────────────────────────────
 tab1, tab2, tab3 = st.tabs(["📋 ウォッチリスト", "📈 チャート分析", "🔬 バックテスト"])
 
@@ -205,7 +237,22 @@ with tab1:
             f1, f2 = st.columns(2)
             f1.metric("ポジション状態", fx_detail.get("ポジション状態", "—"))
             f1.metric("建値", fx_detail.get("建値", "—"))
+            f1.metric("売買方向", fx_detail.get("売買方向", "ロング") or "ロング")
             f2.metric("最終更新日時", fx_detail.get("最終更新日時", "—"))
+
+            detail_ticker = str(fx_detail.get("Yahooティッカー", "")).strip()
+            if detail_ticker:
+                try:
+                    detail_chart = load_fx_chart_data(detail_ticker, "6mo", "1d")
+                except ValueError:
+                    detail_chart = pd.DataFrame()
+                if not detail_chart.empty and len(detail_chart) >= 25:
+                    st.markdown("##### 📊 テクニカルサマリー（参考表示・判定には使用しません）")
+                    summary_df = build_technical_summary(detail_chart)
+                    buy_count = (summary_df["判定"] == "買い").sum()
+                    sell_count = (summary_df["判定"] == "売り").sum()
+                    st.caption(f"買い: {buy_count}件 / 中立: {(summary_df['判定'] == '中立').sum()}件 / 売り: {sell_count}件")
+                    st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
         # --- スマホからPythonを遠隔起動するボタン ---
         st.markdown("---")
@@ -314,7 +361,7 @@ with tab2:
             m4.metric("トレンド", trend)
 
             fig = make_subplots(
-                rows=3, cols=1, shared_xaxes=True, row_heights=[0.55, 0.2, 0.25], vertical_spacing=0.03,
+                rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.03,
             )
 
             fig.add_trace(go.Candlestick(
@@ -328,37 +375,107 @@ with tab2:
             colors = ["#26a69a" if float(df_chart["Close"].iloc[i]) >= float(df_chart["Open"].iloc[i]) else "#ef5350" for i in range(len(df_chart))]
             fig.add_trace(go.Bar(x=df_chart.index, y=df_chart["Volume"], name="出来高", marker_color=colors, showlegend=False), row=2, col=1)
 
-            # RSI（参考表示のみ。エントリー/エグジット判定には使わない）
-            rsi = calc_rsi(df_chart["Close"])
-            fig.add_trace(go.Scatter(x=df_chart.index, y=rsi, name="RSI(14)", line=dict(color="#e91e63", width=1.5)), row=3, col=1)
-            fig.add_hline(y=70, line=dict(color="#666666", width=1, dash="dot"), row=3, col=1)
-            fig.add_hline(y=30, line=dict(color="#666666", width=1, dash="dot"), row=3, col=1)
-
             fig.update_layout(
                 title=f"{selected_label} {interval_label}チャート（{period_label}）",
-                xaxis_rangeslider_visible=False, height=750, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                xaxis_rangeslider_visible=False, height=550, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
                 font=dict(color="#fafafa"), legend=dict(orientation="h", y=1.02, x=0), margin=dict(l=10, r=10, t=60, b=10),
             )
             fig.update_xaxes(gridcolor="#2d2d2d", showgrid=True)
             fig.update_yaxes(gridcolor="#2d2d2d", showgrid=True)
-            fig.update_yaxes(range=[0, 100], row=3, col=1)
 
             st.plotly_chart(fig, use_container_width=True)
 
-            # MACD（参考表示のみ。エントリー/エグジット判定には使わない）
-            macd_line, signal_line, histogram = calc_macd(df_chart["Close"])
-            fig_macd = make_subplots(rows=1, cols=1)
-            hist_colors = ["#26a69a" if v >= 0 else "#ef5350" for v in histogram]
-            fig_macd.add_trace(go.Bar(x=df_chart.index, y=histogram, name="ヒストグラム", marker_color=hist_colors, showlegend=False))
-            fig_macd.add_trace(go.Scatter(x=df_chart.index, y=macd_line, name="MACD", line=dict(color="#2196f3", width=1.5)))
-            fig_macd.add_trace(go.Scatter(x=df_chart.index, y=signal_line, name="シグナル", line=dict(color="#ff9800", width=1.5)))
-            fig_macd.update_layout(
-                title="MACD", height=250, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-                font=dict(color="#fafafa"), legend=dict(orientation="h", y=1.1, x=0), margin=dict(l=10, r=10, t=40, b=10),
+            # ─── 下部テクニカル指標（選択式・参考表示のみ。エントリー/エグジット判定には使わない） ───
+            indicator_options = ["RSI", "MACD", "RCI", "ストキャスティクス", "ADX", "CCI", "Williams %R", "ATR"]
+            selected_indicators = st.multiselect(
+                "表示する下部指標を選択：", indicator_options, default=["RSI", "MACD"], key="t2_indicators",
             )
-            fig_macd.update_xaxes(gridcolor="#2d2d2d", showgrid=True)
-            fig_macd.update_yaxes(gridcolor="#2d2d2d", showgrid=True)
-            st.plotly_chart(fig_macd, use_container_width=True)
+
+            high_c, low_c, close_c = df_chart["High"], df_chart["Low"], df_chart["Close"]
+
+            def _sub_chart(title: str, height: int = 220):
+                f = make_subplots(rows=1, cols=1)
+                f.update_layout(
+                    title=title, height=height, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                    font=dict(color="#fafafa"), legend=dict(orientation="h", y=1.15, x=0),
+                    margin=dict(l=10, r=10, t=40, b=10),
+                )
+                f.update_xaxes(gridcolor="#2d2d2d", showgrid=True)
+                f.update_yaxes(gridcolor="#2d2d2d", showgrid=True)
+                return f
+
+            if "RSI" in selected_indicators:
+                rsi = calc_rsi(close_c)
+                f = _sub_chart("RSI(14)")
+                f.add_trace(go.Scatter(x=df_chart.index, y=rsi, name="RSI(14)", line=dict(color="#e91e63", width=1.5)))
+                f.add_hline(y=70, line=dict(color="#666666", width=1, dash="dot"))
+                f.add_hline(y=30, line=dict(color="#666666", width=1, dash="dot"))
+                f.update_yaxes(range=[0, 100])
+                st.plotly_chart(f, use_container_width=True)
+
+            if "MACD" in selected_indicators:
+                macd_line, signal_line, histogram = calc_macd(close_c)
+                f = _sub_chart("MACD")
+                hist_colors = ["#26a69a" if v >= 0 else "#ef5350" for v in histogram]
+                f.add_trace(go.Bar(x=df_chart.index, y=histogram, name="ヒストグラム", marker_color=hist_colors, showlegend=False))
+                f.add_trace(go.Scatter(x=df_chart.index, y=macd_line, name="MACD", line=dict(color="#2196f3", width=1.5)))
+                f.add_trace(go.Scatter(x=df_chart.index, y=signal_line, name="シグナル", line=dict(color="#ff9800", width=1.5)))
+                st.plotly_chart(f, use_container_width=True)
+
+            if "RCI" in selected_indicators:
+                rci_short = calc_rci(close_c, RCI_PERIODS["short"])
+                rci_mid = calc_rci(close_c, RCI_PERIODS["mid"])
+                rci_long = calc_rci(close_c, RCI_PERIODS["long"])
+                f = _sub_chart("RCI（3line）")
+                f.add_trace(go.Scatter(x=df_chart.index, y=rci_short, name="RCI短期", line=dict(color="#26a69a", width=1.5)))
+                f.add_trace(go.Scatter(x=df_chart.index, y=rci_mid, name="RCI中期", line=dict(color="#ff9800", width=1.5)))
+                f.add_trace(go.Scatter(x=df_chart.index, y=rci_long, name="RCI長期", line=dict(color="#2196f3", width=1.5)))
+                f.add_hline(y=80, line=dict(color="#666666", width=1, dash="dot"))
+                f.add_hline(y=-80, line=dict(color="#666666", width=1, dash="dot"))
+                f.update_yaxes(range=[-100, 100])
+                st.plotly_chart(f, use_container_width=True)
+
+            if "ストキャスティクス" in selected_indicators:
+                stoch_k, stoch_d = calc_stochastic(high_c, low_c, close_c)
+                f = _sub_chart("ストキャスティクス・スロー")
+                f.add_trace(go.Scatter(x=df_chart.index, y=stoch_k, name="%K", line=dict(color="#e91e63", width=1.5)))
+                f.add_trace(go.Scatter(x=df_chart.index, y=stoch_d, name="%D", line=dict(color="#2196f3", width=1.5)))
+                f.add_hline(y=80, line=dict(color="#666666", width=1, dash="dot"))
+                f.add_hline(y=20, line=dict(color="#666666", width=1, dash="dot"))
+                f.update_yaxes(range=[0, 100])
+                st.plotly_chart(f, use_container_width=True)
+
+            if "ADX" in selected_indicators:
+                plus_di, minus_di, adx = calc_adx(high_c, low_c, close_c)
+                f = _sub_chart("ADX / +DI / -DI")
+                f.add_trace(go.Scatter(x=df_chart.index, y=adx, name="ADX", line=dict(color="#fafafa", width=1.5)))
+                f.add_trace(go.Scatter(x=df_chart.index, y=plus_di, name="+DI", line=dict(color="#26a69a", width=1.5)))
+                f.add_trace(go.Scatter(x=df_chart.index, y=minus_di, name="-DI", line=dict(color="#ef5350", width=1.5)))
+                f.add_hline(y=25, line=dict(color="#666666", width=1, dash="dot"))
+                st.plotly_chart(f, use_container_width=True)
+
+            if "CCI" in selected_indicators:
+                cci = calc_cci(high_c, low_c, close_c)
+                f = _sub_chart("CCI(20)")
+                f.add_trace(go.Scatter(x=df_chart.index, y=cci, name="CCI", line=dict(color="#9c27b0", width=1.5)))
+                f.add_hline(y=100, line=dict(color="#666666", width=1, dash="dot"))
+                f.add_hline(y=-100, line=dict(color="#666666", width=1, dash="dot"))
+                st.plotly_chart(f, use_container_width=True)
+
+            if "Williams %R" in selected_indicators:
+                willr = calc_williams_r(high_c, low_c, close_c)
+                f = _sub_chart("Williams %R")
+                f.add_trace(go.Scatter(x=df_chart.index, y=willr, name="%R", line=dict(color="#ff9800", width=1.5)))
+                f.add_hline(y=-20, line=dict(color="#666666", width=1, dash="dot"))
+                f.add_hline(y=-80, line=dict(color="#666666", width=1, dash="dot"))
+                f.update_yaxes(range=[-100, 0])
+                st.plotly_chart(f, use_container_width=True)
+
+            if "ATR" in selected_indicators:
+                atr = calc_atr(high_c, low_c, close_c)
+                f = _sub_chart("ATR(14)")
+                f.add_trace(go.Scatter(x=df_chart.index, y=atr, name="ATR", line=dict(color="#4caf50", width=1.5)))
+                st.plotly_chart(f, use_container_width=True)
 
             # ─── ポジション操作（手動エントリー） ───────────
             st.markdown("---")
@@ -374,16 +491,22 @@ with tab2:
             else:
                 position_state = str(watch_row.get("ポジション状態", "")).strip()
                 entry_price_now = watch_row.get("建値", "")
-                if position_state == "ロング中":
-                    st.write(f"現在のポジション：**ロング中**（建値: {entry_price_now}）")
+                current_direction = str(watch_row.get("売買方向", "")).strip() or "ロング"
+                if position_state in ("ロング中", "ショート中"):
+                    st.write(f"現在のポジション：**{position_state}**（建値: {entry_price_now} ／ 売買方向: {current_direction}）")
                 else:
                     st.write("現在のポジション：**ノーポジ**")
+                    entry_direction = st.radio(
+                        "売買方向を選択：", ["ロング", "ショート"], horizontal=True,
+                        index=1 if current_direction == "ショート" else 0, key="t2_entry_direction",
+                    )
+                    action_label = "ショートでエントリー" if entry_direction == "ショート" else "ロングでエントリー"
                     entry_ref_time = df_chart.index[-1]
                     st.info(
                         f"この操作では、チャート上の最終確定データ（{interval_label}・{entry_ref_time}時点の終値 "
-                        f"{price_now:,.4f}）を建値としてエントリーを記録します。リアルタイムの約定時刻ではありません。"
+                        f"{price_now:,.4f}）を建値として「{action_label}」を記録します。リアルタイムの約定時刻ではありません。"
                     )
-                    if st.button("🟢 ここでエントリーを記録", key="t2_manual_entry"):
+                    if st.button(f"🟢 ここで{action_label}を記録", key="t2_manual_entry"):
                         try:
                             entry_client = init_connection()
                             entry_sheet = entry_client.open("kabu").worksheet("FXウォッチリスト")
@@ -396,9 +519,13 @@ with tab2:
                             if row_idx is None:
                                 st.error("Sheets上に該当通貨ペアの行が見つかりませんでした。")
                             else:
-                                entry_sheet.update(f"L{row_idx}:M{row_idx}", [[round(price_now, 4), "ロング中"]])
+                                position_label = "ショート中" if entry_direction == "ショート" else "ロング中"
+                                entry_sheet.update(
+                                    f"L{row_idx}:N{row_idx}",
+                                    [[round(price_now, 4), position_label, entry_direction]],
+                                )
                                 st.success(
-                                    f"エントリーを記録しました（建値: {price_now:,.4f} ／ 参照時刻: {entry_ref_time}）。"
+                                    f"{action_label}を記録しました（建値: {price_now:,.4f} ／ 参照時刻: {entry_ref_time}）。"
                                     "画面を更新します。"
                                 )
                                 get_records.clear()
@@ -416,6 +543,8 @@ with tab3:
     df_watch = pd.DataFrame(records) if records else pd.DataFrame()
 
     strategy_choice = st.selectbox("戦略を選択：", ["EMAクロス", "RCI（3line）"], key="t3_strategy")
+    direction_choice = st.radio("売買方向：", ["ロング", "ショート"], horizontal=True, key="t3_direction")
+    bt_direction = "short" if direction_choice == "ショート" else "long"
 
     rci_periods = RCI_PERIODS
     if strategy_choice == "RCI（3line）":
@@ -501,6 +630,7 @@ with tab3:
                 is_fx=True, pip_multiplier=pm, ma_type="ema",
                 indicator=indicator, rci_periods=rci_periods,
                 stop_loss_pips=stop_loss_pips, take_profit_pips=take_profit_pips,
+                direction=bt_direction,
             )
             summary = summarize(trades_df)
 
@@ -518,7 +648,7 @@ with tab3:
                 "trades_df": trades_df, "summary": summary, "data_bt": data_bt,
                 "bt_label": bt_label, "fast_ema": fast_ema, "slow_ema": slow_ema, "bt_period": bt_period,
                 "bt_interval_label": bt_interval_label,
-                "strategy_choice": strategy_choice,
+                "strategy_choice": strategy_choice, "direction_choice": direction_choice,
             }
 
     result = st.session_state.get("t3_bt_result")
@@ -536,6 +666,7 @@ with tab3:
         bt_period  = result["bt_period"]
         bt_interval_label_result = result.get("bt_interval_label", "日足")
         strategy_choice_result = result.get("strategy_choice", "EMAクロス")
+        direction_choice_result = result.get("direction_choice", "ロング")
         is_rci = strategy_choice_result == "RCI（3line）" and "rci_short" in data_bt.columns
 
         if summary["total_trades"] > 0:
@@ -555,18 +686,20 @@ with tab3:
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["rci_long"], name="RCI長期", line=dict(color="#2196f3", width=1.5)), row=2, col=1)
             fig_bt.add_hline(y=80, line=dict(color="#ef5350", width=1, dash="dot"), row=2, col=1)
             fig_bt.add_hline(y=-80, line=dict(color="#26a69a", width=1, dash="dot"), row=2, col=1)
-            title = f"{bt_label} RCI（3line）バックテスト（{bt_interval_label_result}・{bt_period}）"
+            title = f"{bt_label} RCI（3line）バックテスト・{direction_choice_result}（{bt_interval_label_result}・{bt_period}）"
         else:
             fig_bt = go.Figure()
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["close"], name="終値", line=dict(color="#fafafa", width=1)))
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_fast"], name=f"EMA{fast_ema}（短期）", line=dict(color="#ff9800", width=1.5)))
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["ma_slow"], name=f"EMA{slow_ema}（長期）", line=dict(color="#2196f3", width=1.5)))
-            title = f"{bt_label} EMA{fast_ema}/EMA{slow_ema} バックテスト（{bt_interval_label_result}・{bt_period}）"
+            title = f"{bt_label} EMA{fast_ema}/EMA{slow_ema} バックテスト・{direction_choice_result}（{bt_interval_label_result}・{bt_period}）"
 
         if not trades_df.empty:
             entry_row = dict(row=1, col=1) if is_rci else {}
-            fig_bt.add_trace(go.Scatter(x=trades_df["signal_date"], y=trades_df["entry_price"], mode="markers", name="エントリー（買い）", marker=dict(symbol="triangle-up", size=12, color="#26a69a")), **entry_row)
-            fig_bt.add_trace(go.Scatter(x=trades_df["exit_date"], y=trades_df["exit_price"], mode="markers", name="イグジット（売り）", marker=dict(symbol="triangle-down", size=12, color="#ef5350")), **entry_row)
+            entry_marker_name = "エントリー（ショート）" if direction_choice_result == "ショート" else "エントリー（ロング）"
+            exit_marker_name = "イグジット（買い戻し）" if direction_choice_result == "ショート" else "イグジット（売り）"
+            fig_bt.add_trace(go.Scatter(x=trades_df["signal_date"], y=trades_df["entry_price"], mode="markers", name=entry_marker_name, marker=dict(symbol="triangle-down" if direction_choice_result == "ショート" else "triangle-up", size=12, color="#ef5350" if direction_choice_result == "ショート" else "#26a69a")), **entry_row)
+            fig_bt.add_trace(go.Scatter(x=trades_df["exit_date"], y=trades_df["exit_price"], mode="markers", name=exit_marker_name, marker=dict(symbol="triangle-up" if direction_choice_result == "ショート" else "triangle-down", size=12, color="#26a69a" if direction_choice_result == "ショート" else "#ef5350")), **entry_row)
 
         fig_bt.update_layout(
             title=title,

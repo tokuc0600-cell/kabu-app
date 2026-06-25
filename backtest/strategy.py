@@ -410,8 +410,24 @@ def check_exit_by_pips_intrabar(
     stop_loss_pips: float,
     take_profit_pips: float,
     pip_multiplier: float,
+    *,
+    direction: str = "long",
 ) -> tuple[str | None, float | None]:
-    """check_exit_by_pct_intrabar()のpips版（FX用）。"""
+    """check_exit_by_pct_intrabar()のpips版（FX用）。
+
+    direction="long"（デフォルト）：下落で損切り、上昇で利確。
+    direction="short"：上昇で損切り、下落で利確（FXのショート対応用）。
+    """
+    if direction == "short":
+        if stop_loss_pips:
+            sl_price = entry_price + stop_loss_pips / pip_multiplier
+            if bar_high >= sl_price:
+                return "STOP_LOSS", sl_price
+        if take_profit_pips:
+            tp_price = entry_price - take_profit_pips / pip_multiplier
+            if bar_low <= tp_price:
+                return "TAKE_PROFIT", tp_price
+        return None, None
     if stop_loss_pips:
         sl_price = entry_price - stop_loss_pips / pip_multiplier
         if bar_low <= sl_price:
@@ -434,13 +450,18 @@ def check_exit_by_pips(
     stop_loss_pips: float,
     take_profit_pips: float,
     pip_multiplier: float,
+    *,
+    direction: str = "long",
 ) -> str | None:
     """保有開始価格からのpips差のみでエグジット判定（EMAクロスは見ない）。FX専用。
 
+    direction="long"（デフォルト）/ "short"（FXのショート対応用）。
     戻り値: "STOP_LOSS" / "TAKE_PROFIT" / None。
     同時に複数条件が成立した場合は保守的に損切りを優先する。
     """
     diff_pips = (current_price - entry_price) * pip_multiplier
+    if direction == "short":
+        diff_pips = -diff_pips
     if stop_loss_pips and diff_pips <= -stop_loss_pips:
         return "STOP_LOSS"
     if take_profit_pips and diff_pips >= take_profit_pips:
@@ -466,7 +487,7 @@ def should_exit(
     mode="pct"（デフォルト・株用）はstop_loss_pct/take_profit_pctを使用。
     mode="pips"（FX用）はstop_loss_pips/take_profit_pips/pip_multiplier_valueを使用。
     direction="long"（デフォルト）はLONGポジション・デッドクロスでのエグジットを想定。
-    direction="short"はSHORTポジション・ゴールデンクロスでのエグジットを想定（株専用）。
+    direction="short"はSHORTポジション・ゴールデンクロスでのエグジットを想定（株・FX両対応）。
     """
     expected_state = PositionState.SHORT if direction == "short" else PositionState.LONG
     if position.state != expected_state or position.entry_price is None:
@@ -474,7 +495,8 @@ def should_exit(
 
     if mode == "pips":
         reason = check_exit_by_pips(
-            position.entry_price, current_price, stop_loss_pips, take_profit_pips, pip_multiplier_value
+            position.entry_price, current_price, stop_loss_pips, take_profit_pips, pip_multiplier_value,
+            direction=direction,
         )
     else:
         reason = check_exit_by_pct(
@@ -505,7 +527,7 @@ def step_position(
     """現在の状態と最新の確定足情報から、次のポジション状態を返す。
 
     mode="pct"（デフォルト・株用）/ "pips"（FX用）はshould_exit()に準拠。
-    direction="long"（デフォルト）/ "short"（株専用）はエントリー方向の切り替え。
+    direction="long"（デフォルト）/ "short"（株・FX両対応）はエントリー方向の切り替え。
     """
     if position.state == PositionState.NONE:
         if should_enter(position, cross, direction=direction):

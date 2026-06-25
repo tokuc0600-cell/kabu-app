@@ -141,6 +141,19 @@
   - タブ3「バックテスト」に売買方向（ロング/ショート）のラジオボタンを追加し、`build_trades(direction=...)`に渡す。結果チャートのタイトル・エントリー/イグジットのマーカー名・矢印方向もショート選択時は反転表示される。
 - **動作確認**：合成データでの単体検証（`step_position`のショートエントリー/エグジット時のPnL符号、`check_exit_by_pct`のショート時の損切/利確不等号反転、`build_trades`のショート方向トレード生成・WIN/LOSS判定）を実施し、ロング側の既存挙動に変化が無いことも確認済み。Streamlit画面上でのSheets実データを使った目視確認は未実施（次回ブラウザ確認推奨。手順は本ファイル末尾「4. 開発時の検証チェックリスト」参照）。
 
+### 2.14 FXダッシュボードへのショート対応・新規テクニカル指標・選択式チャート指標の展開（2026-06-26）
+
+- **背景**：2.13で株ダッシュボードに先行実装したショート対応・新規テクニカル指標・選択式チャート指標を、FX側にも展開した。FXは「頻繁にショートを持つ想定」とのユーザーコメントがあり、株より優先度が高い可能性もある機能。
+- `backtest/strategy.py`：FX専用のpipsベース関数`check_exit_by_pips()`/`check_exit_by_pips_intrabar()`に`direction`キーワード引数（デフォルト`"long"`）を追加し、ショート時は損切利確の不等号・pips差分を反転。
+- `backtest/engine.py`：`build_trades()`内にあった「FX（`is_fx=True`）は常にdirection="long"に強制する」分岐（`direction = "short" if (direction == "short" and not is_fx) else "long"`）を削除し、株・FX両方でショートを使えるようにした。FXのPnL計算（pips×pip_multiplier）もdirection別に符号を分岐。
+- `streamlit_dashboard/fx/sync_fx.py`：`sync_kabu.py`と同パターンで`_resolve_direction()`/`_build_position(row, direction)`を追加し、Sheets「FXウォッチリスト」のN列「売買方向」を読んで`step_position(mode="pips", direction=...)`に渡すようにした。**Sheets「FXウォッチリスト」シートのN1セルに手動で「売買方向」という見出しを入力しておくこと**（既存ペアはN列が空欄でよく、その場合は従来通りロング運用）。
+- `streamlit_dashboard/fx/app_fx.py`：
+  - タブ1詳細表示に「売買方向」メトリクスと、株と同じ「📊 テクニカルサマリー」テーブル（RSI/MACD/ストキャスティクス/ADX/CCI/Williams%R/RCI短期/ATR）を追加。
+  - タブ2「チャート分析」下部の指標表示をRSI・MACD固定からマルチセレクト（株と同じ8指標）に変更。
+  - タブ2「ポジション操作」に売買方向のラジオボタンを追加。エントリー記録時にSheetsのL:N列（建値・ポジション状態・売買方向）を一括書き込みするように変更（株と異なり最終更新日時は元々この経路で書いていないため、その挙動は維持）。
+  - タブ3「バックテスト」に売買方向のラジオボタンを追加し、`build_trades(direction=...)`に渡す。結果チャートのタイトル・マーカー名・矢印方向もショート選択時は反転表示。
+- **動作確認**：合成データでFXのpipsショート判定（`step_position(mode="pips", direction="short")`でTAKE_PROFIT/STOP_LOSSが正しい価格・符号で発生すること、`build_trades`のFXショートPnLがpips単位で正しく反転すること）を検証済み。Streamlit画面上でのSheets実データを使った目視確認は別途実施予定。
+
 ### 2.6 Phase 2.5: エントリー・エグジットロジック統合（2026-06-20）
 
 - `backtest/engine.py`は`build_trades()`を廃止し、`strategy.step_position()`で1本ずつポジション状態を遷移させる方式に変更した。CLIに`--stop-loss`/`--take-profit`オプションを追加（デフォルト0=無効、デフォルト動作は従来の「デッドクロスのみでイグジット」と同じ）。

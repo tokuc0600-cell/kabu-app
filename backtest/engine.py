@@ -83,11 +83,10 @@ def build_trades(
     （strategy.step_positionのmode="pips"）。is_fx=False（株）はstop_loss_pct/take_profit_pct
     （%基準、mode="pct"）のまま変更しない。
 
-    direction="long"（デフォルト）/ "short"（株専用）：エントリー方向の切り替え。
-    ショートはFX側（is_fx=True）では未対応のため、is_fx=Trueの場合は常にlongとして扱う。
+    direction="long"（デフォルト）/ "short"：エントリー方向の切り替え。株・FX両対応。
     """
     data = attach_indicators(df, fast=fast, slow=slow, ma_type=ma_type)
-    direction = "short" if (direction == "short" and not is_fx) else "long"
+    direction = "short" if direction == "short" else "long"
 
     if indicator == "rci":
         data = attach_rci(data, periods=rci_periods or RCI_PERIODS)
@@ -115,7 +114,7 @@ def build_trades(
             if is_fx:
                 reason, exit_price = check_exit_by_pips_intrabar(
                     position.entry_price, bar_high, bar_low,
-                    stop_loss_pips, take_profit_pips, pip_multiplier,
+                    stop_loss_pips, take_profit_pips, pip_multiplier, direction=direction,
                 )
             else:
                 reason, exit_price = check_exit_by_pct_intrabar(
@@ -141,7 +140,9 @@ def build_trades(
         if event["action"] == "ENTRY":
             pending_entry = {**event, "idx": i}
         elif event["action"] == "EXIT" and pending_entry is not None:
-            if is_fx:
+            if is_fx and direction == "short":
+                profit_loss = (pending_entry["price"] - event["price"]) * pip_multiplier
+            elif is_fx:
                 profit_loss = (event["price"] - pending_entry["price"]) * pip_multiplier
             elif direction == "short":
                 profit_loss = (pending_entry["price"] - event["price"]) / pending_entry["price"] * 100

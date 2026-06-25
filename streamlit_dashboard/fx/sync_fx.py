@@ -27,6 +27,12 @@ EXIT_SIGNAL_LABELS = {
     "TAKE_PROFIT": "●利確",
 }
 
+EXIT_SIGNAL_LABELS_SHORT = {
+    "DC": "▲ゴールデンクロス（買い戻し注意）",
+    "STOP_LOSS": "■損切り",
+    "TAKE_PROFIT": "●利確",
+}
+
 
 def _connect():
     gcp_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
@@ -44,8 +50,15 @@ def _to_ohlc_df(hist: pd.DataFrame) -> pd.DataFrame:
     return df[["time", "open", "high", "low", "close", "volume"]]
 
 
-def _build_position(row: dict) -> Position:
-    state = PositionState.LONG if row.get("ポジション状態") == "ロング中" else PositionState.NONE
+def _resolve_direction(row: dict) -> str:
+    """Sheetsの「売買方向」列から取引方向を判定する（空欄・列が無い場合は"long"扱いで後方互換）。"""
+    return "short" if str(row.get("売買方向", "")).strip() == "ショート" else "long"
+
+
+def _build_position(row: dict, direction: str) -> Position:
+    expected_label = "ショート中" if direction == "short" else "ロング中"
+    expected_state = PositionState.SHORT if direction == "short" else PositionState.LONG
+    state = expected_state if row.get("ポジション状態") == expected_label else PositionState.NONE
     entry_price = row.get("建値")
     entry_price = float(entry_price) if entry_price not in (None, "", "nan") else None
     return Position(state=state, entry_price=entry_price)
@@ -83,21 +96,29 @@ def compute_pair_update(ticker_code: str, row: dict) -> dict | None:
 
     cross = detect_cross_at(prev["ma_fast"], prev["ma_slow"], curr["ma_fast"], curr["ma_slow"])
 
-    position = _build_position(row)
+    direction = _resolve_direction(row)
+    position = _build_position(row, direction)
     stop_loss_pips = _to_pips(row.get("損切りpips"))
     take_profit_pips = _to_pips(row.get("利確pips"))
     new_position, event = step_position(
         position, cross, current_price, curr["time"],
         mode="pips", stop_loss_pips=stop_loss_pips, take_profit_pips=take_profit_pips,
-        pip_multiplier_value=pip_multiplier(ticker_code),
+        pip_multiplier_value=pip_multiplier(ticker_code), direction=direction,
     )
 
     if event and event["action"] == "ENTRY":
-        signal = "★ゴールデンクロス（買い）"
+        signal = "★デッドクロス（ショートサイン）" if direction == "short" else "★ゴールデンクロス（買い）"
     elif event and event["action"] == "EXIT":
-        signal = EXIT_SIGNAL_LABELS.get(event["reason"], "安定")
+        labels = EXIT_SIGNAL_LABELS_SHORT if direction == "short" else EXIT_SIGNAL_LABELS
+        signal = labels.get(event["reason"], "安定")
     else:
         signal = "安定"
+
+    position_state = "ノーポジ"
+    if new_position.state == PositionState.LONG:
+        position_state = "ロング中"
+    elif new_position.state == PositionState.SHORT:
+        position_state = "ショート中"
 
     return {
         "current_price": current_price,
@@ -107,7 +128,7 @@ def compute_pair_update(ticker_code: str, row: dict) -> dict | None:
         "trend": trend,
         "signal": signal,
         "entry_price": new_position.entry_price if new_position.entry_price is not None else "",
-        "position_state": "ロング中" if new_position.state == PositionState.LONG else "ノーポジ",
+        "position_state": position_state,
     }
 
 
