@@ -27,6 +27,13 @@ def get_trade_window(data: pd.DataFrame, entry_time, exit_time, margin_bars: int
     return data.iloc[start:end].copy()
 
 
+RCI_LINE_STYLES = {
+    "rci_short": {"label": "RCI短期", "color": "#26a69a"},
+    "rci_mid":   {"label": "RCI中期", "color": "#ff9800"},
+    "rci_long":  {"label": "RCI長期", "color": "#2196f3"},
+}
+
+
 def build_trade_detail_figure(
     data: pd.DataFrame,
     trade: dict,
@@ -34,7 +41,7 @@ def build_trade_detail_figure(
     slow_col: str = "ema_slow",
     n_bars: int = 5,
     theme: dict | None = None,
-    rci_col: str | None = None,
+    rci_cols: list[str] | None = None,
 ) -> go.Figure:
     """エントリーからエグジットまでの期間を1本の連続チャートで表示する。
 
@@ -42,8 +49,8 @@ def build_trade_detail_figure(
     data は open/high/low/close 列（小文字）を持つ前提（backtest/engine.py の to_engine_df() 形式）。
     Streamlit非依存（pd.DataFrame/dict/Figureのみ扱う）。株・FX両方の呼び出し元から使える。
 
-    rci_colを指定すると、上段に価格チャート・下段にRCI（±80ライン付き）の2段サブプロットにする
-    （RCI戦略のトレードを拡大表示する際に判定根拠を確認できるようにするため）。
+    rci_colsを指定すると、上段に価格チャート・下段にRCI（短期・中期・長期を重ねて表示、±80ライン付き）の
+    2段サブプロットにする（RCI戦略のトレードを拡大表示する際に判定根拠を確認できるようにするため）。
     """
     def _first(*keys):
         for key in keys:
@@ -62,7 +69,8 @@ def build_trade_detail_figure(
 
     window = get_trade_window(data, entry_time, exit_time, margin_bars=n_bars)
 
-    show_rci = rci_col is not None and rci_col in window.columns
+    available_rci_cols = [c for c in (rci_cols or []) if c in window.columns]
+    show_rci = bool(available_rci_cols)
     if show_rci:
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
         price_row = dict(row=1, col=1)
@@ -98,10 +106,12 @@ def build_trade_detail_figure(
     ), **price_row)
 
     if show_rci:
-        fig.add_trace(go.Scatter(
-            x=window.index, y=window[rci_col], mode="lines", name="RCI短期",
-            line=dict(color="#26a69a", width=1.5), showlegend=False,
-        ), row=2, col=1)
+        for col in available_rci_cols:
+            style = RCI_LINE_STYLES.get(col, {"label": col, "color": "#26a69a"})
+            fig.add_trace(go.Scatter(
+                x=window.index, y=window[col], mode="lines", name=style["label"],
+                line=dict(color=style["color"], width=1.5), showlegend=True,
+            ), row=2, col=1)
         fig.add_hline(y=80, line=dict(color="#ef5350", width=1, dash="dot"), row=2, col=1)
         fig.add_hline(y=-80, line=dict(color="#26a69a", width=1, dash="dot"), row=2, col=1)
 
@@ -114,6 +124,8 @@ def build_trade_detail_figure(
         margin=dict(l=10, r=10, t=40, b=10),
         xaxis_rangeslider_visible=False,
     )
+    if theme.get("width"):
+        fig.update_layout(width=theme["width"])
     fig.update_xaxes(gridcolor="#2d2d2d", showgrid=True)
     fig.update_yaxes(gridcolor="#2d2d2d", showgrid=True)
 

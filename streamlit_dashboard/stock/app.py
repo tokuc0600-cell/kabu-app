@@ -381,6 +381,11 @@ with tab2:
                     st.write(f"現在のポジション：**ロング中**（建値: ¥{entry_price_now}）")
                 else:
                     st.write("現在のポジション：**ノーポジ**")
+                    entry_ref_time = df_chart.index[-1]
+                    st.info(
+                        f"この操作では、チャート上の最終確定データ（{interval_label}・{entry_ref_time}時点の終値 "
+                        f"¥{price_now:,.2f}）を建値としてエントリーを記録します。リアルタイムの約定時刻ではありません。"
+                    )
                     if st.button("🟢 ここでエントリーを記録", key="t2_manual_entry"):
                         try:
                             entry_client = init_connection()
@@ -395,7 +400,10 @@ with tab2:
                                 st.error("Sheets上に該当銘柄の行が見つかりませんでした。")
                             else:
                                 entry_sheet.update(f"J{row_idx}:K{row_idx}", [[round(price_now, 2), "ロング中"]])
-                                st.success(f"エントリーを記録しました（建値: ¥{price_now:,.2f}）。画面を更新します。")
+                                st.success(
+                                    f"エントリーを記録しました（建値: ¥{price_now:,.2f} ／ 参照時刻: {entry_ref_time}）。"
+                                    "画面を更新します。"
+                                )
                                 st.rerun()
                         except Exception as e:
                             st.error(f"エントリー記録に失敗しました: {e}")
@@ -490,6 +498,8 @@ with tab3:
             data_bt["ma_slow"] = data_bt["close"].ewm(span=slow_ema, adjust=False).mean()
             if indicator == "rci":
                 data_bt["rci_short"] = calc_rci(data_bt["close"], rci_periods["short"])
+                data_bt["rci_mid"] = calc_rci(data_bt["close"], rci_periods["mid"])
+                data_bt["rci_long"] = calc_rci(data_bt["close"], rci_periods["long"])
             data_bt = data_bt.set_index("time")
 
             st.session_state["t3_bt_result"] = {
@@ -527,6 +537,8 @@ with tab3:
             fig_bt = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["close"], name="終値", line=dict(color="#fafafa", width=1)), row=1, col=1)
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["rci_short"], name="RCI短期", line=dict(color="#26a69a", width=1.5)), row=2, col=1)
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["rci_mid"], name="RCI中期", line=dict(color="#ff9800", width=1.5)), row=2, col=1)
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["rci_long"], name="RCI長期", line=dict(color="#2196f3", width=1.5)), row=2, col=1)
             fig_bt.add_hline(y=80, line=dict(color="#ef5350", width=1, dash="dot"), row=2, col=1)
             fig_bt.add_hline(y=-80, line=dict(color="#26a69a", width=1, dash="dot"), row=2, col=1)
             title = f"{bt_label} RCI（3line）バックテスト（{bt_period}）"
@@ -568,11 +580,15 @@ with tab3:
                     f"#{i+1}: {row['signal_date']} → {row['exit_date']}"
                     for i, row in trade_records.iterrows()
                 ]
-                col_dsel, col_dbars = st.columns([3, 1])
+                col_dsel, col_dbars, col_dheight, col_dwidth = st.columns([2, 1, 1, 1])
                 with col_dsel:
                     selected_trade_label = st.selectbox("対象トレードを選択：", trade_labels, key="t3_detail_trade")
                 with col_dbars:
-                    n_bars = st.number_input("前後の余白本数", min_value=1, max_value=50, value=5, step=1, key="t3_detail_nbars")
+                    n_bars = st.slider("前後の余白本数（期間の縮尺）", min_value=1, max_value=50, value=5, step=1, key="t3_detail_nbars")
+                with col_dheight:
+                    detail_height = st.slider("チャート高さ(px)", min_value=300, max_value=900, value=400, step=50, key="t3_detail_height")
+                with col_dwidth:
+                    detail_width = st.slider("チャート幅(px)", min_value=400, max_value=1600, value=800, step=50, key="t3_detail_width")
 
                 selected_trade = trade_records.iloc[trade_labels.index(selected_trade_label)].to_dict()
                 try:
@@ -580,9 +596,10 @@ with tab3:
                         data_bt, selected_trade,
                         fast_col="ma_fast", slow_col="ma_slow",
                         n_bars=n_bars,
-                        rci_col="rci_short" if is_rci else None,
+                        rci_cols=["rci_short", "rci_mid", "rci_long"] if is_rci else None,
+                        theme={"height": detail_height, "width": detail_width},
                     )
-                    st.plotly_chart(fig_detail, use_container_width=True)
+                    st.plotly_chart(fig_detail, use_container_width=False)
                 except Exception as e:
                     st.warning("トレード詳細の表示に失敗しました（再度「▶ バックテスト実行」を押すと直る場合があります）")
                     st.caption(f"data_bt列: {list(data_bt.columns)}")

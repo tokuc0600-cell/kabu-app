@@ -114,6 +114,7 @@ FX_INTERVAL_OPTIONS = {
     "5分足":   {"interval": "5m",  "periods": ["5日", "1ヶ月", "2ヶ月"]},
     "15分足":  {"interval": "15m", "periods": ["5日", "1ヶ月", "2ヶ月"]},
     "1時間足": {"interval": "1h",  "periods": ["1ヶ月", "3ヶ月", "6ヶ月", "1年", "2年"]},
+    "4時間足": {"interval": "4h",  "periods": ["1ヶ月", "3ヶ月", "6ヶ月", "1年", "2年"]},
     "日足":    {"interval": "1d",  "periods": ["3ヶ月", "6ヶ月", "1年", "3年", "5年", "最大"]},
     "週足":    {"interval": "1wk", "periods": ["1年", "3年", "5年", "最大"]},
 }
@@ -149,9 +150,9 @@ with tab1:
         # --- スマホ用：シグナルと通貨ペアでの絞り込み機能 ---
         st.subheader("🔍 通貨ペアスクリーニング")
 
-        # 通貨ペアの選択ボックス（デフォルトを空にして、ユーザーが選ぶ仕様に。状態保持のためkeyを追加）
+        # 通貨ペアの選択ボックス（株のウォッチリストと同様、未選択時は全件表示。絞り込みたい場合のみ選択）
         all_pairs = df['通貨ペア名'].dropna().unique().tolist() if '通貨ペア名' in df.columns else []
-        selected_pairs = st.multiselect("表示する通貨ペアを選択してください：", all_pairs, default=[], key="fx_selected_pairs")
+        selected_pairs = st.multiselect("通貨ペアで絞り込む（任意・未選択なら全件表示）：", all_pairs, default=[], key="fx_selected_pairs")
 
         # シグナルの選択ボックス（初期状態でも選べるように固定シグナルを追加）
         fixed_signals = ["★ゴールデンクロス（買い）", "▼デッドクロス（売り）", "安定"]
@@ -165,12 +166,10 @@ with tab1:
 
         selected_signal = st.selectbox("抽出したいシグナルを選択してください：", all_signals)
 
-        # フィルター処理
+        # フィルター処理（未選択時は全件、選択時はその通貨ペアのみに絞る）
         filtered_df = df.copy()
         if selected_pairs:
             filtered_df = filtered_df[filtered_df['通貨ペア名'].isin(selected_pairs)]
-        else:
-            filtered_df = pd.DataFrame(columns=df.columns) # 何も選択されていない場合は表示しない
 
         if selected_signal != "すべて":
             filtered_df = filtered_df[filtered_df['シグナル'] == selected_signal]
@@ -213,16 +212,23 @@ with tab1:
         st.subheader("⚙️ 遠隔コントロール")
 
         if st.button("🔄 表示中の通貨ペアのレートを最新に更新する", use_container_width=True):
-            st.info("Yahoo Financeから最新データを収集中です... (画面を閉じずにしばらくお待ちください)")
-
             # 表示中の通貨ペアのみ更新（backtest/strategy.pyに一元化されたロジックをsync_fx.py経由で呼び出す）
             active_pairs = filtered_df['通貨ペア名'].tolist() if not filtered_df.empty else []
-            update_fx_watchlist_with_signals(sheet=sheet, target_pairs=active_pairs)
+            # yfinance取得+Sheets書き込みでペアごとに約2.4秒かかる想定（sync_fx.py内のレート制限スリープ込み）
+            est_sec = len(active_pairs) * 2.4
+            st.info(
+                f"Yahoo Financeから最新データを収集中です（対象 {len(active_pairs)} 件・推定 {est_sec:.0f} 秒）... "
+                "(画面を閉じずにしばらくお待ちください)"
+            )
 
-            st.success("✨ データ取得と同期が完了しました！表示を更新します...")
-            get_records.clear() # キャッシュを破棄して最新データを読み直す準備
-            time.sleep(1.5) # メッセージを読ませるための待機
-            st.rerun() # 自動でページを再読み込み（これにより選択状態が保持されたまま画面が更新されます）
+            try:
+                update_fx_watchlist_with_signals(sheet=sheet, target_pairs=active_pairs)
+                st.success("✨ データ取得と同期が完了しました！表示を更新します...")
+                get_records.clear() # キャッシュを破棄して最新データを読み直す準備
+                time.sleep(1.5) # メッセージを読ませるための待機
+                st.rerun() # 自動でページを再読み込み（これにより選択状態が保持されたまま画面が更新されます）
+            except Exception as e:
+                st.error(f"レート更新中にエラーが発生しました。時間を置いて再度お試しください: {e}")
     else:
         st.warning("スプレッドシートからデータを読み込めませんでした。接続設定を確認してください。")
 
@@ -262,7 +268,7 @@ with tab2:
             selected_label = selected_ticker
 
     with col_int:
-        interval_label = st.selectbox("時間足：", list(FX_INTERVAL_OPTIONS.keys()), index=4, key="t2_interval")
+        interval_label = st.selectbox("時間足：", list(FX_INTERVAL_OPTIONS.keys()), index=5, key="t2_interval")
         interval_value = FX_INTERVAL_OPTIONS[interval_label]["interval"]
         available_periods = FX_INTERVAL_OPTIONS[interval_label]["periods"]
 
@@ -372,6 +378,11 @@ with tab2:
                     st.write(f"現在のポジション：**ロング中**（建値: {entry_price_now}）")
                 else:
                     st.write("現在のポジション：**ノーポジ**")
+                    entry_ref_time = df_chart.index[-1]
+                    st.info(
+                        f"この操作では、チャート上の最終確定データ（{interval_label}・{entry_ref_time}時点の終値 "
+                        f"{price_now:,.4f}）を建値としてエントリーを記録します。リアルタイムの約定時刻ではありません。"
+                    )
                     if st.button("🟢 ここでエントリーを記録", key="t2_manual_entry"):
                         try:
                             entry_client = init_connection()
@@ -386,7 +397,10 @@ with tab2:
                                 st.error("Sheets上に該当通貨ペアの行が見つかりませんでした。")
                             else:
                                 entry_sheet.update(f"L{row_idx}:M{row_idx}", [[round(price_now, 4), "ロング中"]])
-                                st.success(f"エントリーを記録しました（建値: {price_now:,.4f}）。画面を更新します。")
+                                st.success(
+                                    f"エントリーを記録しました（建値: {price_now:,.4f} ／ 参照時刻: {entry_ref_time}）。"
+                                    "画面を更新します。"
+                                )
                                 get_records.clear()
                                 st.rerun()
                         except Exception as e:
@@ -441,7 +455,7 @@ with tab3:
             bt_label = bt_ticker
 
     with col_b2:
-        bt_interval_label = st.selectbox("時間足：", list(FX_INTERVAL_OPTIONS.keys()), index=4, key="t3_interval")
+        bt_interval_label = st.selectbox("時間足：", list(FX_INTERVAL_OPTIONS.keys()), index=5, key="t3_interval")
         bt_interval_value = FX_INTERVAL_OPTIONS[bt_interval_label]["interval"]
         bt_available_periods = FX_INTERVAL_OPTIONS[bt_interval_label]["periods"]
 
@@ -496,6 +510,8 @@ with tab3:
             data_bt["ma_slow"] = data_bt["close"].ewm(span=slow_ema, adjust=False).mean()
             if indicator == "rci":
                 data_bt["rci_short"] = calc_rci(data_bt["close"], rci_periods["short"])
+                data_bt["rci_mid"] = calc_rci(data_bt["close"], rci_periods["mid"])
+                data_bt["rci_long"] = calc_rci(data_bt["close"], rci_periods["long"])
             data_bt = data_bt.set_index("time")
 
             st.session_state["t3_bt_result"] = {
@@ -535,6 +551,8 @@ with tab3:
             fig_bt = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["close"], name="終値", line=dict(color="#fafafa", width=1)), row=1, col=1)
             fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["rci_short"], name="RCI短期", line=dict(color="#26a69a", width=1.5)), row=2, col=1)
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["rci_mid"], name="RCI中期", line=dict(color="#ff9800", width=1.5)), row=2, col=1)
+            fig_bt.add_trace(go.Scatter(x=data_bt.index, y=data_bt["rci_long"], name="RCI長期", line=dict(color="#2196f3", width=1.5)), row=2, col=1)
             fig_bt.add_hline(y=80, line=dict(color="#ef5350", width=1, dash="dot"), row=2, col=1)
             fig_bt.add_hline(y=-80, line=dict(color="#26a69a", width=1, dash="dot"), row=2, col=1)
             title = f"{bt_label} RCI（3line）バックテスト（{bt_interval_label_result}・{bt_period}）"
@@ -576,11 +594,15 @@ with tab3:
                     f"#{i+1}: {row['signal_date']} → {row['exit_date']}"
                     for i, row in trade_records.iterrows()
                 ]
-                col_dsel, col_dbars = st.columns([3, 1])
+                col_dsel, col_dbars, col_dheight, col_dwidth = st.columns([2, 1, 1, 1])
                 with col_dsel:
                     selected_trade_label = st.selectbox("対象トレードを選択：", trade_labels, key="t3_detail_trade")
                 with col_dbars:
-                    n_bars = st.number_input("前後の余白本数", min_value=1, max_value=50, value=5, step=1, key="t3_detail_nbars")
+                    n_bars = st.slider("前後の余白本数（期間の縮尺）", min_value=1, max_value=50, value=5, step=1, key="t3_detail_nbars")
+                with col_dheight:
+                    detail_height = st.slider("チャート高さ(px)", min_value=300, max_value=900, value=400, step=50, key="t3_detail_height")
+                with col_dwidth:
+                    detail_width = st.slider("チャート幅(px)", min_value=400, max_value=1600, value=800, step=50, key="t3_detail_width")
 
                 selected_trade = trade_records.iloc[trade_labels.index(selected_trade_label)].to_dict()
                 try:
@@ -588,9 +610,10 @@ with tab3:
                         data_bt, selected_trade,
                         fast_col="ma_fast", slow_col="ma_slow",
                         n_bars=n_bars,
-                        rci_col="rci_short" if is_rci else None,
+                        rci_cols=["rci_short", "rci_mid", "rci_long"] if is_rci else None,
+                        theme={"height": detail_height, "width": detail_width},
                     )
-                    st.plotly_chart(fig_detail, use_container_width=True)
+                    st.plotly_chart(fig_detail, use_container_width=False)
                 except Exception as e:
                     st.warning("トレード詳細の表示に失敗しました（再度「▶ バックテスト実行」を押すと直る場合があります）")
                     st.caption(f"data_bt列: {list(data_bt.columns)}")
