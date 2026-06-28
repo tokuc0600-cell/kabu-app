@@ -388,7 +388,7 @@ with tab2:
             # ─── 下部テクニカル指標（選択式・参考表示のみ。エントリー/エグジット判定には使わない） ───
             indicator_options = ["RSI", "MACD", "RCI", "ストキャスティクス", "ADX", "CCI", "Williams %R", "ATR"]
             selected_indicators = st.multiselect(
-                "表示する下部指標を選択：", indicator_options, default=["RSI", "MACD"], key="t2_indicators",
+                "表示する下部指標を選択：", indicator_options, default=["RCI"], key="t2_indicators",
             )
 
             high_c, low_c, close_c = df_chart["High"], df_chart["Low"], df_chart["Close"]

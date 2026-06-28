@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from datetime import datetime
 
 import streamlit as st
 import gspread
@@ -18,7 +19,7 @@ from backtest.strategy import (
 )
 from backtest.engine import build_trades, summarize, to_engine_df
 from backtest.detail_view import build_trade_detail_figure
-from sync_fx import update_fx_watchlist_with_signals
+from sync_fx import update_fx_watchlist_with_signals, append_trade_history, send_trade_email
 
 # --- ページの設定（スマホ対応） ---
 st.set_page_config(page_title="FX 投資ダッシュボード", layout="wide")
@@ -122,6 +123,12 @@ FX_INTERVAL_OPTIONS = {
     "週足":    {"interval": "1wk", "periods": ["1年", "3年", "5年", "最大"]},
 }
 
+# シグナル検出・自動売買専用の時間足（1h/4hのみ）
+SIGNAL_INTERVAL_OPTIONS = {
+    "4時間足（推奨）": "4h",
+    "1時間足": "1h",
+}
+
 
 @st.cache_data(ttl=3600)
 def load_fx_chart_data(ticker_code: str, period: str, interval: str = "1d") -> pd.DataFrame:
@@ -169,7 +176,7 @@ def build_technical_summary(df_chart: pd.DataFrame) -> pd.DataFrame:
 
 
 # ─── タブ ───────────────────────────────
-tab1, tab2, tab3 = st.tabs(["📋 ウォッチリスト", "📈 チャート分析", "🔬 バックテスト"])
+tab1, tab2, tab3, tab4 = st.tabs(["📋 ウォッチリスト", "📈 チャート分析", "🔬 バックテスト", "📒 トレード履歴"])
 
 # ═══════════════════════════════════════════
 # タブ1：ウォッチリスト（既存機能、変更なし）
@@ -258,22 +265,27 @@ with tab1:
         st.markdown("---")
         st.subheader("⚙️ 遠隔コントロール")
 
-        if st.button("🔄 表示中の通貨ペアのレートを最新に更新する", use_container_width=True):
-            # 表示中の通貨ペアのみ更新（backtest/strategy.pyに一元化されたロジックをsync_fx.py経由で呼び出す）
+        sig_interval_label = st.selectbox(
+            "シグナル検出・時間足：",
+            list(SIGNAL_INTERVAL_OPTIONS.keys()),
+            key="ctrl_signal_interval",
+        )
+        sig_interval = SIGNAL_INTERVAL_OPTIONS[sig_interval_label]
+
+        if st.button("🔄 表示中の通貨ペアのレートを最新に更新する（RCIシグナル判定）", use_container_width=True):
             active_pairs = filtered_df['通貨ペア名'].tolist() if not filtered_df.empty else []
-            # yfinance取得+Sheets書き込みでペアごとに約2.4秒かかる想定（sync_fx.py内のレート制限スリープ込み）
             est_sec = len(active_pairs) * 2.4
             st.info(
-                f"Yahoo Financeから最新データを収集中です（対象 {len(active_pairs)} 件・推定 {est_sec:.0f} 秒）... "
+                f"Yahoo Financeから最新データを収集中です（対象 {len(active_pairs)} 件・{sig_interval_label}・推定 {est_sec:.0f} 秒）... "
                 "(画面を閉じずにしばらくお待ちください)"
             )
 
             try:
-                update_fx_watchlist_with_signals(sheet=sheet, target_pairs=active_pairs)
+                update_fx_watchlist_with_signals(sheet=sheet, target_pairs=active_pairs, interval=sig_interval)
                 st.success("✨ データ取得と同期が完了しました！表示を更新します...")
-                get_records.clear() # キャッシュを破棄して最新データを読み直す準備
-                time.sleep(1.5) # メッセージを読ませるための待機
-                st.rerun() # 自動でページを再読み込み（これにより選択状態が保持されたまま画面が更新されます）
+                get_records.clear()
+                time.sleep(1.5)
+                st.rerun()
             except Exception as e:
                 st.error(f"レート更新中にエラーが発生しました。時間を置いて再度お試しください: {e}")
     else:
@@ -388,7 +400,7 @@ with tab2:
             # ─── 下部テクニカル指標（選択式・参考表示のみ。エントリー/エグジット判定には使わない） ───
             indicator_options = ["RSI", "MACD", "RCI", "ストキャスティクス", "ADX", "CCI", "Williams %R", "ATR"]
             selected_indicators = st.multiselect(
-                "表示する下部指標を選択：", indicator_options, default=["RSI", "MACD"], key="t2_indicators",
+                "表示する下部指標を選択：", indicator_options, default=["RCI"], key="t2_indicators",
             )
 
             high_c, low_c, close_c = df_chart["High"], df_chart["Low"], df_chart["Close"]
@@ -494,6 +506,56 @@ with tab2:
                 current_direction = str(watch_row.get("売買方向", "")).strip() or "ロング"
                 if position_state in ("ロング中", "ショート中"):
                     st.write(f"現在のポジション：**{position_state}**（建値: {entry_price_now} ／ 売買方向: {current_direction}）")
+                    if st.button("🔴 ポジションをクローズ（手動）", key="t2_manual_close"):
+                        try:
+                            close_client = init_connection()
+                            close_spr = close_client.open("kabu")
+                            close_sheet = close_spr.worksheet("FXウォッチリスト")
+                            close_records = close_sheet.get_all_records()
+                            row_idx = None
+                            for i, r in enumerate(close_records, start=2):
+                                if str(r.get("Yahooティッカー", "")).strip() == selected_ticker:
+                                    row_idx = i
+                                    break
+                            if row_idx is None:
+                                st.error("Sheets上に該当通貨ペアの行が見つかりませんでした。")
+                            else:
+                                close_sheet.update(f"L{row_idx}:M{row_idx}", [["", "ノーポジ"]])
+
+                                direction_label = "ショート" if current_direction == "ショート" else "ロング"
+                                pnl_pips_manual = None
+                                if entry_price_now not in ("", None, "—"):
+                                    try:
+                                        ep = float(str(entry_price_now).replace(",", ""))
+                                        pm_val = pip_multiplier(selected_ticker)
+                                        if current_direction == "ショート":
+                                            pnl_pips_manual = round((ep - price_now) * pm_val, 1)
+                                        else:
+                                            pnl_pips_manual = round((price_now - ep) * pm_val, 1)
+                                    except (ValueError, TypeError):
+                                        pass
+
+                                history_row = [
+                                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    fx_detail.get("通貨ペア名", selected_ticker),
+                                    direction_label,
+                                    "EXIT",
+                                    round(price_now, 4),
+                                    "MANUAL",
+                                    pnl_pips_manual if pnl_pips_manual is not None else "",
+                                    "手動",
+                                    "",
+                                ]
+                                append_trade_history(close_spr, history_row)
+                                send_trade_email(
+                                    fx_detail.get("通貨ペア名", selected_ticker),
+                                    "EXIT", direction_label, price_now, "MANUAL", pnl_pips_manual,
+                                )
+                                st.success(f"ポジションをクローズしました（参照価格: {price_now:,.4f}）。画面を更新します。")
+                                get_records.clear()
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"クローズ記録に失敗しました: {e}")
                 else:
                     st.write("現在のポジション：**ノーポジ**")
                     entry_direction = st.radio(
@@ -751,3 +813,81 @@ with tab3:
                     st.warning("トレード詳細の表示に失敗しました（再度「▶ バックテスト実行」を押すと直る場合があります）")
                     st.caption(f"data_bt列: {list(data_bt.columns)}")
                     st.exception(e)
+
+# ═══════════════════════════════════════════
+# タブ4：トレード履歴
+# ═══════════════════════════════════════════
+with tab4:
+    st.subheader("📒 FXトレード履歴")
+
+    @st.cache_data(ttl=60)
+    def load_trade_history() -> pd.DataFrame:
+        try:
+            client = init_connection()
+            spr = client.open("kabu")
+            hist_sheet = spr.worksheet("FXトレード履歴")
+            data = hist_sheet.get_all_records()
+            if not data:
+                return pd.DataFrame()
+            return pd.DataFrame(data)
+        except Exception as e:
+            st.error(f"履歴の読み込みに失敗しました: {e}")
+            return pd.DataFrame()
+
+    if st.button("🔄 履歴を最新に更新", key="t4_refresh"):
+        load_trade_history.clear()
+        st.rerun()
+
+    df_hist = load_trade_history()
+
+    if df_hist.empty:
+        st.info("まだトレード履歴がありません。「🔄 更新する」ボタンを押してRCIシグナルを確認すると記録されます。")
+    else:
+        # 新しい順に表示
+        df_hist_disp = df_hist.iloc[::-1].reset_index(drop=True)
+
+        # サマリー統計
+        exits = df_hist[df_hist["アクション"] == "EXIT"].copy()
+        if not exits.empty:
+            exits["損益(pips)"] = pd.to_numeric(exits["損益(pips)"], errors="coerce")
+            exits_valid = exits.dropna(subset=["損益(pips)"])
+            if not exits_valid.empty:
+                wins = exits_valid[exits_valid["損益(pips)"] > 0]
+                losses = exits_valid[exits_valid["損益(pips)"] < 0]
+                total_profit = wins["損益(pips)"].sum()
+                total_loss = abs(losses["損益(pips)"].sum())
+                pf = round(total_profit / total_loss, 2) if total_loss else float("inf")
+                win_rate = round(len(wins) / len(exits_valid) * 100, 1)
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("決済回数", f"{len(exits_valid)} 回")
+                c2.metric("勝率", f"{win_rate} %")
+                c3.metric("プロフィットファクター", f"{pf}")
+                c4.metric("純損益", f"{exits_valid['損益(pips)'].sum():+.1f} pips")
+
+        # 色付きテーブル表示
+        def _color_pnl(val):
+            try:
+                v = float(val)
+                if v > 0:
+                    return "color: #26a69a"
+                if v < 0:
+                    return "color: #ef5350"
+            except (TypeError, ValueError):
+                pass
+            return ""
+
+        def _color_action(val):
+            if val == "ENTRY":
+                return "color: #26a69a"
+            if val == "EXIT":
+                return "color: #ef5350"
+            return ""
+
+        styled = df_hist_disp.style
+        if "損益(pips)" in df_hist_disp.columns:
+            styled = styled.map(_color_pnl, subset=["損益(pips)"])
+        if "アクション" in df_hist_disp.columns:
+            styled = styled.map(_color_action, subset=["アクション"])
+
+        st.dataframe(styled, use_container_width=True, hide_index=True)

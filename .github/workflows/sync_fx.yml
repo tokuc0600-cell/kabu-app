@@ -1,9 +1,9 @@
 name: FX Watchlist Sync
 
 on:
-  schedule:
-    - cron: "0 22 * * *"  # 毎日 7:00 JST (22:00 UTC)
-  workflow_dispatch:       # 手動実行ボタン
+  # schedule:
+  #   - cron: "0 22 * * *"  # 毎日 7:00 JST (22:00 UTC) ← RCI手動運用に切り替えたため停止
+  workflow_dispatch:       # 手動実行ボタン（デバッグ用）
 
 env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
