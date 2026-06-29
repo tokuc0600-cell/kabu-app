@@ -198,8 +198,8 @@ def _find_bar_before_entry(df: pd.DataFrame, jst_str: str, interval: str) -> pd.
     mask = idx_cmp <= entry_cmp
     if not mask.any():
         return None
-    bar = df[mask.values].iloc[-1].copy()
-    bar["_bar_time"] = df[mask.values].index[-1]
+    bar = df[mask].iloc[-1].copy()
+    bar["_bar_time"] = df[mask].index[-1]
     return bar
 
 
