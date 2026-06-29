@@ -69,11 +69,15 @@ PERIOD_MAP = {
 # タイムゾーン変換
 # ──────────────────────────────────────────────────────────
 def broker_to_jst(broker_str: str, utc_offset: int) -> str:
-    """ブローカー時刻（YYYY-MM-DD HH:MM）をJST文字列に変換する。"""
+    """ブローカー時刻をJST文字列に変換する。MT4のドット区切り(2026.06.25 14:30)にも対応。"""
     broker_str = broker_str.strip()
     if not broker_str:
         return ""
-    for fmt in ("%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+    for fmt in (
+        "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M", "%Y/%m/%d %H:%M:%S",
+        "%Y.%m.%d %H:%M", "%Y.%m.%d %H:%M:%S",   # MT4形式
+    ):
         try:
             dt = datetime.strptime(broker_str, fmt)
             jst_dt = dt + timedelta(hours=(9 - utc_offset))
@@ -81,6 +85,25 @@ def broker_to_jst(broker_str: str, utc_offset: int) -> str:
         except ValueError:
             continue
     return ""
+
+
+def _infer_pip_multiplier(ticker: str, pair_name: str) -> float:
+    """ティッカーまたはペア名からpip乗数を推定する。
+
+    Gold/Silver/商品先物はFXと単位が異なるため個別対応。
+    """
+    combined = (ticker + pair_name).upper()
+    # Gold / XAUUSD / GC=F : 1pip = $0.01 → 乗数100
+    if any(k in combined for k in ("XAU", "GOLD", "GC=F", "GC=")):
+        return 100.0
+    # Silver / XAGUSD : 1pip = $0.001 → 乗数1000
+    if any(k in combined for k in ("XAG", "SILVER", "SI=")):
+        return 1000.0
+    # JPYペア : 1pip = 0.01 → 乗数100
+    if "JPY" in combined:
+        return 100.0
+    # その他FX : 1pip = 0.0001 → 乗数10000
+    return 10000.0
 
 
 def jst_to_chart_x(jst_str: str, interval: str) -> pd.Timestamp | None:
@@ -389,31 +412,34 @@ def _render_entry_form(client, fx_watchlist_records: list) -> None:
     close_price = st.number_input("クローズ価格", min_value=0.0, format="%.5f", key="rt_close_price")
 
     # ─── 損益（自動計算 + 手動上書き） ───
-    # pip乗数：ティッカー > ペア名 > フォールバック(JPY=100 / その他=10000) の優先順で判定
-    _combined = (selected_ticker + selected_pair).upper()
-    _pm = pip_multiplier(selected_ticker) if selected_ticker else (100.0 if "JPY" in _combined else 10000.0)
+    st.markdown("##### 損益")
+
+    _default_pm = int(_infer_pip_multiplier(selected_ticker, selected_pair))
+    col_pm, col_pnl_manual = st.columns(2)
+    with col_pm:
+        custom_pm = st.number_input(
+            "pip乗数（JPY=100 / Gold=100 / その他FX=10000）",
+            min_value=1, max_value=100000, value=_default_pm, step=1,
+            key="rt_pip_multiplier",
+            help="Gold(GC=F/XAUUSD)=100、JPYペア=100、EUR/USD等=10000",
+        )
+    with col_pnl_manual:
+        pnl_override_raw = st.number_input("手動入力（上書き・0=自動計算を使用）", step=0.1, format="%.1f", key="rt_pnl_override")
 
     auto_pnl = None
     if entry_price > 0 and close_price > 0:
         if direction == "ロング":
-            auto_pnl = round((close_price - entry_price) * _pm, 1)
+            auto_pnl = round((close_price - entry_price) * custom_pm, 1)
         else:
-            auto_pnl = round((entry_price - close_price) * _pm, 1)
+            auto_pnl = round((entry_price - close_price) * custom_pm, 1)
 
-    st.markdown("##### 損益")
-    col_pnl_auto, col_pnl_manual = st.columns(2)
-    with col_pnl_auto:
-        if auto_pnl is not None:
-            st.metric(
-                label=f"自動計算（pip乗数: {int(_pm)}）",
-                value=f"{auto_pnl:+.1f} pips",
-            )
-        else:
-            st.caption("エントリー価格とクローズ価格を入力すると自動計算されます")
-    with col_pnl_manual:
-        pnl_override_raw = st.number_input("手動入力（上書き・0=自動計算を使用）", step=0.1, format="%.1f", key="rt_pnl_override")
+    if auto_pnl is not None:
+        st.metric(label="自動計算", value=f"{auto_pnl:+.1f} pips")
+    else:
+        st.caption("エントリー価格とクローズ価格を入力すると自動計算されます")
 
     pnl_final = pnl_override_raw if pnl_override_raw != 0.0 else (auto_pnl if auto_pnl is not None else "")
+
 
     memo = st.text_input("メモ（任意）", key="rt_memo")
 
