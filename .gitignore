@@ -47,3 +47,12 @@ backtest/data/
 # investment-report（証券口座CSV・生成レポートはコミットしない）
 investment-report/input/
 investment-report/output/
+
+# ドキュメント・メモ（ローカル作業用）
+docs/Canva.md
+"docs/claude memo２.md"
+docs/claude\ memo２.md
+
+# note_workflow 生成物（画像・下書き）
+note_workflow/assets/images/
+note_workflow/drafts/
