@@ -20,6 +20,7 @@ from backtest.strategy import (
 from backtest.engine import build_trades, summarize, to_engine_df
 from backtest.detail_view import build_trade_detail_figure
 from sync_fx import update_fx_watchlist_with_signals, append_trade_history, send_trade_email
+from real_trade_tab import render_real_trade_tab
 
 # --- ページの設定（スマホ対応） ---
 st.set_page_config(page_title="FX 投資ダッシュボード", layout="wide")
@@ -176,7 +177,7 @@ def build_technical_summary(df_chart: pd.DataFrame) -> pd.DataFrame:
 
 
 # ─── タブ ───────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["📋 ウォッチリスト", "📈 チャート分析", "🔬 バックテスト", "📒 トレード履歴"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 ウォッチリスト", "📈 チャート分析", "🔬 バックテスト", "📒 トレード履歴", "📊 リアルトレード"])
 
 # ═══════════════════════════════════════════
 # タブ1：ウォッチリスト（既存機能、変更なし）
@@ -891,3 +892,10 @@ with tab4:
             styled = styled.map(_color_action, subset=["アクション"])
 
         st.dataframe(styled, use_container_width=True, hide_index=True)
+
+# ═══════════════════════════════════════════
+# タブ5：リアルトレード
+# ═══════════════════════════════════════════
+with tab5:
+    st.subheader("📊 リアルトレード")
+    render_real_trade_tab(client, records)
