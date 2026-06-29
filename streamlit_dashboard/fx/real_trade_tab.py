@@ -389,20 +389,25 @@ def _render_entry_form(client, fx_watchlist_records: list) -> None:
     close_price = st.number_input("クローズ価格", min_value=0.0, format="%.5f", key="rt_close_price")
 
     # ─── 損益（自動計算 + 手動上書き） ───
+    # pip乗数：ティッカー > ペア名 > フォールバック(JPY=100 / その他=10000) の優先順で判定
+    _combined = (selected_ticker + selected_pair).upper()
+    _pm = pip_multiplier(selected_ticker) if selected_ticker else (100.0 if "JPY" in _combined else 10000.0)
+
     auto_pnl = None
-    if entry_price > 0 and close_price > 0 and selected_ticker:
-        pm = pip_multiplier(selected_ticker)
+    if entry_price > 0 and close_price > 0:
         if direction == "ロング":
-            auto_pnl = round((close_price - entry_price) * pm, 1)
+            auto_pnl = round((close_price - entry_price) * _pm, 1)
         else:
-            auto_pnl = round((entry_price - close_price) * pm, 1)
+            auto_pnl = round((entry_price - close_price) * _pm, 1)
 
     st.markdown("##### 損益")
     col_pnl_auto, col_pnl_manual = st.columns(2)
     with col_pnl_auto:
         if auto_pnl is not None:
-            color = "#26a69a" if auto_pnl >= 0 else "#ef5350"
-            st.markdown(f"**自動計算:** <span style='color:{color};font-size:1.2em'>{auto_pnl:+.1f} pips</span>", unsafe_allow_html=True)
+            st.metric(
+                label=f"自動計算（pip乗数: {int(_pm)}）",
+                value=f"{auto_pnl:+.1f} pips",
+            )
         else:
             st.caption("エントリー価格とクローズ価格を入力すると自動計算されます")
     with col_pnl_manual:
